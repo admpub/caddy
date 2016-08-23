@@ -8,12 +8,24 @@ environment:
   GOPATH: c:\gopath
 
 install:
-  - go get golang.org/x/tools/cmd/vet
-  - echo %GOPATH%
+  - rmdir c:\go /s /q
+  - appveyor DownloadFile https://storage.googleapis.com/golang/go1.7.windows-amd64.zip
+  - 7z x go1.7.windows-amd64.zip -y -oC:\ > NUL
   - go version
   - go env
-  - go get -d ./...
+  - go get -t ./...
+  - go get github.com/golang/lint/golint
+  - go get github.com/gordonklaus/ineffassign
+  - set PATH=%GOPATH%\bin;%PATH%
 
-build_script:
+build: off
+
+test_script:
   - go vet ./...
-  - go test ./...
+  - go test -race ./...
+  - ineffassign .
+
+after_test:
+  - golint ./...
+
+deploy: off
