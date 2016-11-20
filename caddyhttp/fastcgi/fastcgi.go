@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mholt/caddy/caddyhttp/httpserver"
 )
@@ -30,6 +31,11 @@ type Handler struct {
 	ServerName      string
 	ServerPort      string
 }
+
+// When a rewrite is performed, a header field of this name
+// is added to the request
+// It contains the original request URI before the rewrite.
+const internalRewriteFieldName = "Caddy-Rewrite-Original-URI"
 
 // ServeHTTP satisfies the httpserver.Handler interface.
 func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
@@ -72,11 +78,11 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 			}
 
 			// Connect to FastCGI gateway
-			network, address := rule.parseAddress()
-			fcgiBackend, err := Dial(network, address)
+			fcgiBackend, err := rule.dialer.Dial()
 			if err != nil {
 				return http.StatusBadGateway, err
 			}
+			fcgiBackend.SetReadTimeout(rule.ReadTimeout)
 
 			var resp *http.Response
 			contentLength, _ := strconv.Atoi(r.Header.Get("Content-Length"))
@@ -89,10 +95,6 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 				resp, err = fcgiBackend.Options(env)
 			default:
 				resp, err = fcgiBackend.Post(env, r.Method, r.Header.Get("Content-Type"), r.Body, contentLength)
-			}
-
-			if resp.Body != nil {
-				defer resp.Body.Close()
 			}
 
 			if err != nil && err != io.EOF {
@@ -108,10 +110,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 				return http.StatusBadGateway, err
 			}
 
+			defer rule.dialer.Close(fcgiBackend)
+
 			// Log any stderr output from upstream
-			if fcgiBackend.stderr.Len() != 0 {
+			if stderr := fcgiBackend.StdErr(); stderr.Len() != 0 {
 				// Remove trailing newline, error logger already does this.
-				err = LogError(strings.TrimSuffix(fcgiBackend.stderr.String(), "\n"))
+				err = LogError(strings.TrimSuffix(stderr.String(), "\n"))
 			}
 
 			// Normally we would return the status code if it is an error status (>= 400),
@@ -127,28 +131,28 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 	return h.Next.ServeHTTP(w, r)
 }
 
-// parseAddress returns the network and address of r.
+// parseAddress returns the network and address of fcgiAddress.
 // The first string is the network, "tcp" or "unix", implied from the scheme and address.
-// The second string is r.Address, with scheme prefixes removed.
+// The second string is fcgiAddress, with scheme prefixes removed.
 // The two returned strings can be used as parameters to the Dial() function.
-func (r Rule) parseAddress() (string, string) {
+func parseAddress(fcgiAddress string) (string, string) {
 	// check if address has tcp scheme explicitly set
-	if strings.HasPrefix(r.Address, "tcp://") {
-		return "tcp", r.Address[len("tcp://"):]
+	if strings.HasPrefix(fcgiAddress, "tcp://") {
+		return "tcp", fcgiAddress[len("tcp://"):]
 	}
 	// check if address has fastcgi scheme explicitly set
-	if strings.HasPrefix(r.Address, "fastcgi://") {
-		return "tcp", r.Address[len("fastcgi://"):]
+	if strings.HasPrefix(fcgiAddress, "fastcgi://") {
+		return "tcp", fcgiAddress[len("fastcgi://"):]
 	}
 	// check if unix socket
-	if trim := strings.HasPrefix(r.Address, "unix"); strings.HasPrefix(r.Address, "/") || trim {
+	if trim := strings.HasPrefix(fcgiAddress, "unix"); strings.HasPrefix(fcgiAddress, "/") || trim {
 		if trim {
-			return "unix", r.Address[len("unix:"):]
+			return "unix", fcgiAddress[len("unix:"):]
 		}
-		return "unix", r.Address
+		return "unix", fcgiAddress
 	}
 	// default case, a plain tcp address with no scheme
-	return "tcp", r.Address
+	return "tcp", fcgiAddress
 }
 
 func writeHeader(w http.ResponseWriter, r *http.Response) {
@@ -204,11 +208,9 @@ func (h Handler) buildEnv(r *http.Request, rule Rule, fpath string) (map[string]
 	// or it might have been rewritten internally by the rewrite middleware (see issue #256).
 	// If it was rewritten, there will be a header indicating the original URL,
 	// which is needed to get the correct RequestURI value for PHP apps.
-	const internalRewriteFieldName = "Caddy-Rewrite-Original-URI"
 	reqURI := r.URL.RequestURI()
 	if origURI := r.Header.Get(internalRewriteFieldName); origURI != "" {
 		reqURI = origURI
-		r.Header.Del(internalRewriteFieldName)
 	}
 
 	// Some variables are unused but cleared explicitly to prevent
@@ -261,17 +263,20 @@ func (h Handler) buildEnv(r *http.Request, rule Rule, fpath string) (map[string]
 		env[envVar[0]] = replacer.Replace(envVar[1])
 	}
 
-	// Add all HTTP headers to env variables
+	// Add all HTTP headers (except Caddy-Rewrite-Original-URI ) to env variables
 	for field, val := range r.Header {
+		if strings.ToLower(field) == strings.ToLower(internalRewriteFieldName) {
+			continue
+		}
 		header := strings.ToUpper(field)
 		header = headerNameReplacer.Replace(header)
 		env["HTTP_"+header] = strings.Join(val, ", ")
 	}
-
 	return env, nil
 }
 
 // Rule represents a FastCGI handling rule.
+// It is parsed from the fastcgi directive in the Caddyfile, see setup.go.
 type Rule struct {
 	// The base path to match. Required.
 	Path string
@@ -297,6 +302,12 @@ type Rule struct {
 
 	// Ignored paths
 	IgnoredSubPaths []string
+
+	// The duration used to set a deadline when reading from the FastCGI server.
+	ReadTimeout time.Duration
+
+	// FCGI dialer
+	dialer dialer
 }
 
 // canSplit checks if path can split into two based on rule.SplitPath.

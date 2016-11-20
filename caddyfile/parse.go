@@ -2,6 +2,7 @@ package caddyfile
 
 import (
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,8 +16,7 @@ import (
 // pass in nil instead.
 func Parse(filename string, input io.Reader, validDirectives []string) ([]ServerBlock, error) {
 	p := parser{Dispenser: NewDispenser(filename, input), validDirectives: validDirectives}
-	blocks, err := p.parseAll()
-	return blocks, err
+	return p.parseAll()
 }
 
 // allTokens lexes the entire input, but does not parse it.
@@ -61,12 +61,7 @@ func (p *parser) parseAll() ([]ServerBlock, error) {
 func (p *parser) parseOne() error {
 	p.block = ServerBlock{Tokens: make(map[string][]Token)}
 
-	err := p.begin()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return p.begin()
 }
 
 func (p *parser) begin() error {
@@ -75,6 +70,7 @@ func (p *parser) begin() error {
 	}
 
 	err := p.addresses()
+
 	if err != nil {
 		return err
 	}
@@ -85,12 +81,7 @@ func (p *parser) begin() error {
 		return nil
 	}
 
-	err = p.blockContents()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return p.blockContents()
 }
 
 func (p *parser) addresses() error {
@@ -237,7 +228,11 @@ func (p *parser) doImport() error {
 		return p.Errf("Failed to use import pattern %s: %v", importPattern, err)
 	}
 	if len(matches) == 0 {
-		return p.Errf("No files matching import pattern %s", importPattern)
+		if strings.Contains(globPattern, "*") {
+			log.Printf("[WARNING] No files matching import pattern: %s", importPattern)
+		} else {
+			return p.Errf("File to import not found: %s", importPattern)
+		}
 	}
 
 	// splice out the import directive and its argument (2 tokens total)
@@ -260,7 +255,9 @@ func (p *parser) doImport() error {
 			}
 			if token.Line == importLine {
 				var abs string
-				if !filepath.IsAbs(importFile) {
+				if filepath.IsAbs(token.Text) {
+					abs = token.Text
+				} else if !filepath.IsAbs(importFile) {
 					abs = filepath.Join(filepath.Dir(absFile), token.Text)
 				} else {
 					abs = filepath.Join(importDir, token.Text)

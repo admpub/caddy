@@ -26,12 +26,14 @@ func TestLoggedStatus(t *testing.T) {
 	var next erroringMiddleware
 	rule := Rule{
 		PathScope: "/",
-		Format:    DefaultLogFormat + " {testval}",
-		Log:       log.New(&f, "", 0),
+		Entries: []*Entry{{
+			Format: DefaultLogFormat + " {testval}",
+			Log:    log.New(&f, "", 0),
+		}},
 	}
 
 	logger := Logger{
-		Rules: []Rule{rule},
+		Rules: []*Rule{&rule},
 		Next:  next,
 	}
 
@@ -65,10 +67,12 @@ func TestLoggedStatus(t *testing.T) {
 func TestLogRequestBody(t *testing.T) {
 	var got bytes.Buffer
 	logger := Logger{
-		Rules: []Rule{{
+		Rules: []*Rule{{
 			PathScope: "/",
-			Format:    "{request_body}",
-			Log:       log.New(&got, "", 0),
+			Entries: []*Entry{{
+				Format: "{request_body}",
+				Log:    log.New(&got, "", 0),
+			}},
 		}},
 		Next: httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
 			// drain up body
@@ -100,10 +104,7 @@ func TestLogRequestBody(t *testing.T) {
 		},
 	} {
 		got.Reset()
-		r, err := http.NewRequest("POST", "/", bytes.NewBufferString(c.body))
-		if err != nil {
-			t.Fatal(err)
-		}
+		r := httptest.NewRequest("POST", "/", bytes.NewBufferString(c.body))
 		r.Header.Set("Content-Type", "application/json")
 		status, err := logger.ServeHTTP(httptest.NewRecorder(), r)
 		if status != 0 {
@@ -115,5 +116,51 @@ func TestLogRequestBody(t *testing.T) {
 		if got.String() != c.expect {
 			t.Errorf("case %d: Expected body %q, but got %q", i, c.expect, got.String())
 		}
+	}
+}
+
+func TestMultiEntries(t *testing.T) {
+	var (
+		got1 bytes.Buffer
+		got2 bytes.Buffer
+	)
+	logger := Logger{
+		Rules: []*Rule{{
+			PathScope: "/",
+			Entries: []*Entry{
+				{
+					Format: "foo {request_body}",
+					Log:    log.New(&got1, "", 0),
+				},
+				{
+					Format: "{method} {request_body}",
+					Log:    log.New(&got2, "", 0),
+				},
+			},
+		}},
+		Next: httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
+			// drain up body
+			ioutil.ReadAll(r.Body)
+			return 0, nil
+		}),
+	}
+
+	r, err := http.NewRequest("POST", "/", bytes.NewBufferString("hello world"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Header.Set("Content-Type", "application/json")
+	status, err := logger.ServeHTTP(httptest.NewRecorder(), r)
+	if status != 0 {
+		t.Errorf("Expected status to be 0, but was %d", status)
+	}
+	if err != nil {
+		t.Errorf("Expected error to be nil, instead got: %v", err)
+	}
+	if got, expect := got1.String(), "foo hello world\n"; got != expect {
+		t.Errorf("Expected %q, but got %q", expect, got)
+	}
+	if got, expect := got2.String(), "POST hello world\n"; got != expect {
+		t.Errorf("Expected %q, but got %q", expect, got)
 	}
 }

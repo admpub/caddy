@@ -13,20 +13,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mholt/caddy/caddyfile"
 	"github.com/mholt/caddy/caddyhttp/httpserver"
 
 	"golang.org/x/net/websocket"
 )
-
-func init() {
-	tryDuration = 50 * time.Millisecond // prevent tests from hanging
-}
 
 func TestReverseProxy(t *testing.T) {
 	log.SetOutput(ioutil.Discard)
@@ -46,10 +44,7 @@ func TestReverseProxy(t *testing.T) {
 	}
 
 	// create request and response recorder
-	r, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
+	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 
 	p.ServeHTTP(w, r)
@@ -87,10 +82,7 @@ func TestReverseProxyInsecureSkipVerify(t *testing.T) {
 	}
 
 	// create request and response recorder
-	r, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
+	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 
 	p.ServeHTTP(w, r)
@@ -98,6 +90,37 @@ func TestReverseProxyInsecureSkipVerify(t *testing.T) {
 	if !requestReceived {
 		t.Error("Even with insecure HTTPS, expected backend to receive request, but it didn't")
 	}
+}
+
+func TestWebSocketReverseProxyNonHijackerPanic(t *testing.T) {
+	// Capture the expected panic
+	defer func() {
+		r := recover()
+		if _, ok := r.(httpserver.NonHijackerError); !ok {
+			t.Error("not get the expected panic")
+		}
+	}()
+
+	var connCount int32
+	wsNop := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) { atomic.AddInt32(&connCount, 1) }))
+	defer wsNop.Close()
+
+	// Get proxy to use for the test
+	p := newWebSocketTestProxy(wsNop.URL)
+
+	// Create client request
+	r := httptest.NewRequest("GET", "/", nil)
+
+	r.Header = http.Header{
+		"Connection":            {"Upgrade"},
+		"Upgrade":               {"websocket"},
+		"Origin":                {wsNop.URL},
+		"Sec-WebSocket-Key":     {"x3JJHMbDL1EzLkh9GBhXDw=="},
+		"Sec-WebSocket-Version": {"13"},
+	}
+
+	nonHijacker := httptest.NewRecorder()
+	p.ServeHTTP(nonHijacker, r)
 }
 
 func TestWebSocketReverseProxyServeHTTPHandler(t *testing.T) {
@@ -111,10 +134,8 @@ func TestWebSocketReverseProxyServeHTTPHandler(t *testing.T) {
 	p := newWebSocketTestProxy(wsNop.URL)
 
 	// Create client request
-	r, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
+	r := httptest.NewRequest("GET", "/", nil)
+
 	r.Header = http.Header{
 		"Connection":            {"Upgrade"},
 		"Upgrade":               {"websocket"},
@@ -165,6 +186,7 @@ func TestWebSocketReverseProxyFromWSClient(t *testing.T) {
 	// Set up WebSocket client
 	url := strings.Replace(echoProxy.URL, "http://", "ws://", 1)
 	ws, err := websocket.Dial(url, "", echoProxy.URL)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,11 +194,18 @@ func TestWebSocketReverseProxyFromWSClient(t *testing.T) {
 
 	// Send test message
 	trialMsg := "Is it working?"
-	websocket.Message.Send(ws, trialMsg)
+
+	if sendErr := websocket.Message.Send(ws, trialMsg); sendErr != nil {
+		t.Fatal(sendErr)
+	}
 
 	// It should be echoed back to us
 	var actualMsg string
-	websocket.Message.Receive(ws, &actualMsg)
+
+	if rcvErr := websocket.Message.Receive(ws, &actualMsg); rcvErr != nil {
+		t.Fatal(rcvErr)
+	}
+
 	if actualMsg != trialMsg {
 		t.Errorf("Expected '%s' but got '%s' instead", trialMsg, actualMsg)
 	}
@@ -200,10 +229,11 @@ func TestUnixSocketProxy(t *testing.T) {
 	}))
 
 	// Get absolute path for unix: socket
-	socketPath, err := filepath.Abs("./test_socket")
+	dir, err := ioutil.TempDir("", "caddy_test")
 	if err != nil {
-		t.Fatalf("Unable to get absolute path: %v", err)
+		t.Fatalf("Failed to make temp dir to contain unix socket. %v", err)
 	}
+	socketPath := filepath.Join(dir, "test_socket")
 
 	// Change httptest.Server listener to listen to unix: socket
 	ln, err := net.Listen("unix", socketPath)
@@ -258,10 +288,11 @@ func GetSocketProxy(messageFormat string, prefix string) (*Proxy, *httptest.Serv
 		fmt.Fprintf(w, messageFormat, r.URL.String())
 	}))
 
-	socketPath, err := filepath.Abs("./test_socket")
+	dir, err := ioutil.TempDir("", "caddy_test")
 	if err != nil {
-		return nil, nil, fmt.Errorf("Unable to get absolute path: %v", err)
+		return nil, nil, fmt.Errorf("Failed to make temp dir to contain unix socket. %v", err)
 	}
+	socketPath := filepath.Join(dir, "test_socket")
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
@@ -376,8 +407,10 @@ func TestUpstreamHeadersUpdate(t *testing.T) {
 		"Upgrade":    {"{>Upgrade}"},
 		"+Merge-Me":  {"Merge-Value"},
 		"+Add-Me":    {"Add-Value"},
+		"+Add-Empty": {"{}"},
 		"-Remove-Me": {""},
 		"Replace-Me": {"{hostname}"},
+		"Clear-Me":   {""},
 		"Host":       {"{>Host}"},
 	}
 	// set up proxy
@@ -387,10 +420,7 @@ func TestUpstreamHeadersUpdate(t *testing.T) {
 	}
 
 	// create request and response recorder
-	r, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
+	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 
 	const expectHost = "example.com"
@@ -405,16 +435,24 @@ func TestUpstreamHeadersUpdate(t *testing.T) {
 	replacer := httpserver.NewReplacer(r, nil, "")
 
 	headerKey := "Merge-Me"
-	values, ok := actualHeaders[headerKey]
-	if !ok {
-		t.Errorf("Request sent to upstream backend does not contain expected %v header. Expected header to be added", headerKey)
-	} else if len(values) < 2 && (values[0] != "Initial" || values[1] != replacer.Replace("{hostname}")) {
-		t.Errorf("Values for proxy header `+Merge-Me` should be merged. Got %v", values)
+	got := actualHeaders[headerKey]
+	expect := []string{"Initial", "Merge-Value"}
+	if !reflect.DeepEqual(got, expect) {
+		t.Errorf("Request sent to upstream backend does not contain expected %v header: expect %v, but got %v",
+			headerKey, expect, got)
 	}
 
 	headerKey = "Add-Me"
-	if _, ok := actualHeaders[headerKey]; !ok {
-		t.Errorf("Request sent to upstream backend does not contain expected %v header", headerKey)
+	got = actualHeaders[headerKey]
+	expect = []string{"Add-Value"}
+	if !reflect.DeepEqual(got, expect) {
+		t.Errorf("Request sent to upstream backend does not contain expected %v header: expect %v, but got %v",
+			headerKey, expect, got)
+	}
+
+	headerKey = "Add-Empty"
+	if _, ok := actualHeaders[headerKey]; ok {
+		t.Errorf("Request sent to upstream backend should not contain empty %v header", headerKey)
 	}
 
 	headerKey = "Remove-Me"
@@ -423,12 +461,16 @@ func TestUpstreamHeadersUpdate(t *testing.T) {
 	}
 
 	headerKey = "Replace-Me"
-	headerValue := replacer.Replace("{hostname}")
-	value, ok := actualHeaders[headerKey]
-	if !ok {
-		t.Errorf("Request sent to upstream backend should not remove %v header", headerKey)
-	} else if len(value) > 0 && headerValue != value[0] {
-		t.Errorf("Request sent to upstream backend should replace value of %v header with %v. Instead value was %v", headerKey, headerValue, value)
+	got = actualHeaders[headerKey]
+	expect = []string{replacer.Replace("{hostname}")}
+	if !reflect.DeepEqual(got, expect) {
+		t.Errorf("Request sent to upstream backend does not contain expected %v header: expect %v, but got %v",
+			headerKey, expect, got)
+	}
+
+	headerKey = "Clear-Me"
+	if _, ok := actualHeaders[headerKey]; ok {
+		t.Errorf("Request sent to upstream backend should not contain empty %v header", headerKey)
 	}
 
 	if actualHost != expectHost {
@@ -445,6 +487,8 @@ func TestDownstreamHeadersUpdate(t *testing.T) {
 		w.Header().Add("Merge-Me", "Initial")
 		w.Header().Add("Remove-Me", "Remove-Value")
 		w.Header().Add("Replace-Me", "Replace-Value")
+		w.Header().Add("Content-Type", "text/html")
+		w.Header().Add("Overwrite-Me", "Overwrite-Value")
 		w.Write([]byte("Hello, client"))
 	}))
 	defer backend.Close()
@@ -463,11 +507,12 @@ func TestDownstreamHeadersUpdate(t *testing.T) {
 	}
 
 	// create request and response recorder
-	r, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
+	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
+	// set a predefined skip header
+	w.Header().Set("Content-Type", "text/css")
+	// set a predefined overwritten header
+	w.Header().Set("Overwrite-Me", "Initial")
 
 	p.ServeHTTP(w, r)
 
@@ -475,16 +520,19 @@ func TestDownstreamHeadersUpdate(t *testing.T) {
 	actualHeaders := w.Header()
 
 	headerKey := "Merge-Me"
-	values, ok := actualHeaders[headerKey]
-	if !ok {
-		t.Errorf("Downstream response does not contain expected %v header. Expected header should be added", headerKey)
-	} else if len(values) < 2 && (values[0] != "Initial" || values[1] != replacer.Replace("{hostname}")) {
-		t.Errorf("Values for header `+Merge-Me` should be merged. Got %v", values)
+	got := actualHeaders[headerKey]
+	expect := []string{"Initial", "Merge-Value"}
+	if !reflect.DeepEqual(got, expect) {
+		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
+			headerKey, expect, got)
 	}
 
 	headerKey = "Add-Me"
-	if _, ok := actualHeaders[headerKey]; !ok {
-		t.Errorf("Downstream response does not contain expected %v header", headerKey)
+	got = actualHeaders[headerKey]
+	expect = []string{"Add-Value"}
+	if !reflect.DeepEqual(got, expect) {
+		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
+			headerKey, expect, got)
 	}
 
 	headerKey = "Remove-Me"
@@ -493,14 +541,28 @@ func TestDownstreamHeadersUpdate(t *testing.T) {
 	}
 
 	headerKey = "Replace-Me"
-	headerValue := replacer.Replace("{hostname}")
-	value, ok := actualHeaders[headerKey]
-	if !ok {
-		t.Errorf("Downstream response should contain %v header and not remove it", headerKey)
-	} else if len(value) > 0 && headerValue != value[0] {
-		t.Errorf("Downstream response should have header %v with value %v. Instead value was %v", headerKey, headerValue, value)
+	got = actualHeaders[headerKey]
+	expect = []string{replacer.Replace("{hostname}")}
+	if !reflect.DeepEqual(got, expect) {
+		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
+			headerKey, expect, got)
 	}
 
+	headerKey = "Content-Type"
+	got = actualHeaders[headerKey]
+	expect = []string{"text/css"}
+	if !reflect.DeepEqual(got, expect) {
+		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
+			headerKey, expect, got)
+	}
+
+	headerKey = "Overwrite-Me"
+	got = actualHeaders[headerKey]
+	expect = []string{"Overwrite-Value"}
+	if !reflect.DeepEqual(got, expect) {
+		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
+			headerKey, expect, got)
+	}
 }
 
 var (
@@ -568,10 +630,11 @@ func TestMultiReverseProxyFromClient(t *testing.T) {
 
 	for _, tt := range multiProxy {
 		// Create client request
-		reqURL := singleJoiningSlash(proxy.URL, tt.url)
+		reqURL := proxy.URL + tt.url
 		req, err := http.NewRequest("GET", reqURL, nil)
+
 		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
+			t.Fatalf("Failed to make request: %v", err)
 		}
 
 		resp, err := http.DefaultClient.Do(req)
@@ -604,12 +667,9 @@ func TestHostSimpleProxyNoHeaderForward(t *testing.T) {
 		Upstreams: []Upstream{newFakeUpstream(backend.URL, false)},
 	}
 
-	r, err := http.NewRequest("GET", "/", nil)
+	r := httptest.NewRequest("GET", "/", nil)
 	r.Host = "test.com"
 
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
 	w := httptest.NewRecorder()
 
 	p.ServeHTTP(w, r)
@@ -641,12 +701,9 @@ func TestHostHeaderReplacedUsingForward(t *testing.T) {
 		Upstreams: []Upstream{upstream},
 	}
 
-	r, err := http.NewRequest("GET", "/", nil)
+	r := httptest.NewRequest("GET", "/", nil)
 	r.Host = "test.com"
 
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
 	w := httptest.NewRecorder()
 
 	p.ServeHTTP(w, r)
@@ -723,6 +780,132 @@ func basicAuthTestcase(t *testing.T, upstreamUser, clientUser *url.Userinfo) {
 	}
 }
 
+func TestProxyDirectorURL(t *testing.T) {
+	for i, c := range []struct {
+		requestURL string
+		targetURL  string
+		without    string
+		expectURL  string
+	}{
+		{
+			requestURL: `http://localhost:2020/test`,
+			targetURL:  `https://localhost:2021`,
+			expectURL:  `https://localhost:2021/test`,
+		},
+		{
+			requestURL: `http://localhost:2020/test`,
+			targetURL:  `https://localhost:2021/t`,
+			expectURL:  `https://localhost:2021/t/test`,
+		},
+		{
+			requestURL: `http://localhost:2020/test?t=w`,
+			targetURL:  `https://localhost:2021/t`,
+			expectURL:  `https://localhost:2021/t/test?t=w`,
+		},
+		{
+			requestURL: `http://localhost:2020/test`,
+			targetURL:  `https://localhost:2021/t?foo=bar`,
+			expectURL:  `https://localhost:2021/t/test?foo=bar`,
+		},
+		{
+			requestURL: `http://localhost:2020/test?t=w`,
+			targetURL:  `https://localhost:2021/t?foo=bar`,
+			expectURL:  `https://localhost:2021/t/test?foo=bar&t=w`,
+		},
+		{
+			requestURL: `http://localhost:2020/test?t=w`,
+			targetURL:  `https://localhost:2021/t?foo=bar`,
+			expectURL:  `https://localhost:2021/t?foo=bar&t=w`,
+			without:    "/test",
+		},
+		{
+			requestURL: `http://localhost:2020/test?t%3dw`,
+			targetURL:  `https://localhost:2021/t?foo%3dbar`,
+			expectURL:  `https://localhost:2021/t?foo%3dbar&t%3dw`,
+			without:    "/test",
+		},
+		{
+			requestURL: `http://localhost:2020/test/`,
+			targetURL:  `https://localhost:2021/t/`,
+			expectURL:  `https://localhost:2021/t/test/`,
+		},
+	} {
+		targetURL, err := url.Parse(c.targetURL)
+		if err != nil {
+			t.Errorf("case %d failed to parse target URL: %s", i, err)
+			continue
+		}
+		req, err := http.NewRequest("GET", c.requestURL, nil)
+		if err != nil {
+			t.Errorf("case %d failed to create request: %s", i, err)
+			continue
+		}
+
+		NewSingleHostReverseProxy(targetURL, c.without, 0).Director(req)
+		if expect, got := c.expectURL, req.URL.String(); expect != got {
+			t.Errorf("case %d url not equal: expect %q, but got %q",
+				i, expect, got)
+		}
+	}
+}
+
+func TestReverseProxyRetry(t *testing.T) {
+	log.SetOutput(ioutil.Discard)
+	defer log.SetOutput(os.Stderr)
+
+	// set up proxy
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(w, r.Body)
+		r.Body.Close()
+	}))
+	defer backend.Close()
+
+	su, err := NewStaticUpstreams(caddyfile.NewDispenser("Testfile", strings.NewReader(`
+	proxy / localhost:65535 localhost:65534 `+backend.URL+` {
+		policy round_robin
+		fail_timeout 5s
+		max_fails 1
+		try_duration 5s
+		try_interval 250ms
+	}
+	`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Proxy{
+		Next:      httpserver.EmptyNext, // prevents panic in some cases when test fails
+		Upstreams: su,
+	}
+
+	// middle is required to simulate closable downstream request body
+	middle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err = p.ServeHTTP(w, r)
+		if err != nil {
+			t.Error(err)
+		}
+	}))
+	defer middle.Close()
+
+	testcase := "test content"
+	r, err := http.NewRequest("POST", middle.URL, bytes.NewBufferString(testcase))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != testcase {
+		t.Fatalf("string(b) = %s, want %s", string(b), testcase)
+	}
+}
+
 func newFakeUpstream(name string, insecure bool) *fakeUpstream {
 	uri, _ := url.Parse(name)
 	u := &fakeUpstream{
@@ -764,9 +947,9 @@ func (u *fakeUpstream) Select(r *http.Request) *UpstreamHost {
 	return u.host
 }
 
-func (u *fakeUpstream) AllowedPath(requestPath string) bool {
-	return true
-}
+func (u *fakeUpstream) AllowedPath(requestPath string) bool { return true }
+func (u *fakeUpstream) GetTryDuration() time.Duration       { return 1 * time.Second }
+func (u *fakeUpstream) GetTryInterval() time.Duration       { return 250 * time.Millisecond }
 
 // newWebSocketTestProxy returns a test proxy that will
 // redirect to the specified backendAddr. The function
@@ -806,9 +989,9 @@ func (u *fakeWsUpstream) Select(r *http.Request) *UpstreamHost {
 	}
 }
 
-func (u *fakeWsUpstream) AllowedPath(requestPath string) bool {
-	return true
-}
+func (u *fakeWsUpstream) AllowedPath(requestPath string) bool { return true }
+func (u *fakeWsUpstream) GetTryDuration() time.Duration       { return 1 * time.Second }
+func (u *fakeWsUpstream) GetTryInterval() time.Duration       { return 250 * time.Millisecond }
 
 // recorderHijacker is a ResponseRecorder that can
 // be hijacked.
