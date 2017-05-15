@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -30,6 +32,7 @@ func TestInclude(t *testing.T) {
 	}()
 
 	tests := []struct {
+		args                 []interface{}
 		fileContent          string
 		expectedContent      string
 		shouldErr            bool
@@ -42,7 +45,15 @@ func TestInclude(t *testing.T) {
 			shouldErr:            false,
 			expectedErrorContent: "",
 		},
-		// Test 1 - failure on template.Parse
+		// Test 1 - all good, with args
+		{
+			args:                 []interface{}{"hello", 5},
+			fileContent:          `str1 {{ .Root }} str2 {{index .Args 0}} {{index .Args 1}}`,
+			expectedContent:      fmt.Sprintf("str1 %s str2 %s %d", context.Root, "hello", 5),
+			shouldErr:            false,
+			expectedErrorContent: "",
+		},
+		// Test 2 - failure on template.Parse
 		{
 			fileContent:          `str1 {{ .Root } str2`,
 			expectedContent:      "",
@@ -62,8 +73,16 @@ func TestInclude(t *testing.T) {
 			shouldErr:            true,
 			expectedErrorContent: `type httpserver.Context`,
 		},
+		// Test 4 - all good, with custom function
+		{
+			fileContent:          `hello {{ caddy }}`,
+			expectedContent:      "hello caddy",
+			shouldErr:            false,
+			expectedErrorContent: "",
+		},
 	}
 
+	TemplateFuncs["caddy"] = func() string { return "caddy" }
 	for i, test := range tests {
 		testPrefix := getTestPrefix(i)
 
@@ -73,7 +92,7 @@ func TestInclude(t *testing.T) {
 			t.Fatal(testPrefix+"Failed to create test file. Error was: %v", err)
 		}
 
-		content, err := context.Include(inputFilename)
+		content, err := context.Include(inputFilename, test.args...)
 		if err != nil {
 			if !test.shouldErr {
 				t.Errorf(testPrefix+"Expected no error, found [%s]", test.expectedErrorContent, err.Error())
@@ -226,6 +245,39 @@ func TestHeader(t *testing.T) {
 	}
 }
 
+func TestHostname(t *testing.T) {
+	context := getContextOrFail(t)
+
+	tests := []struct {
+		inputRemoteAddr  string
+		expectedHostname string
+	}{
+		// TODO(mholt): Fix these tests, they're not portable. i.e. my resolver
+		// returns "fwdr-8.fwdr-8.fwdr-8.fwdr-8." instead of these google ones.
+		// Test 0 - ipv4 with port
+		// {"8.8.8.8:1111", "google-public-dns-a.google.com."},
+		// // Test 1 - ipv4 without port
+		// {"8.8.8.8", "google-public-dns-a.google.com."},
+		// // Test 2 - ipv6 with port
+		// {"[2001:4860:4860::8888]:11", "google-public-dns-a.google.com."},
+		// // Test 3 - ipv6 without port and brackets
+		// {"2001:4860:4860::8888", "google-public-dns-a.google.com."},
+		// Test 4 - no hostname available
+		{"1.1.1.1", "1.1.1.1"},
+	}
+
+	for i, test := range tests {
+		testPrefix := getTestPrefix(i)
+
+		context.Req.RemoteAddr = test.inputRemoteAddr
+		actualHostname := context.Hostname()
+
+		if actualHostname != test.expectedHostname {
+			t.Errorf(testPrefix+"Expected hostname %s, found %s", test.expectedHostname, actualHostname)
+		}
+	}
+}
+
 func TestEnv(t *testing.T) {
 	context := getContextOrFail(t)
 
@@ -289,6 +341,44 @@ func TestIP(t *testing.T) {
 
 		if actualIP != test.expectedIP {
 			t.Errorf(testPrefix+"Expected IP %s, found %s", test.expectedIP, actualIP)
+		}
+	}
+}
+
+type myIP string
+
+func (ip myIP) mockInterfaces() ([]net.Addr, error) {
+	a := net.ParseIP(string(ip))
+
+	return []net.Addr{
+		&net.IPNet{IP: a, Mask: nil},
+	}, nil
+}
+
+func TestServerIP(t *testing.T) {
+	context := getContextOrFail(t)
+
+	tests := []string{
+		// Test 0 - ipv4
+		"1.1.1.1",
+		// Test 1 - ipv6
+		"2001:db8:a0b:12f0::1",
+	}
+
+	for i, expectedIP := range tests {
+		testPrefix := getTestPrefix(i)
+
+		// Mock the network interface
+		ip := myIP(expectedIP)
+		networkInterfacesFn = ip.mockInterfaces
+		defer func() {
+			networkInterfacesFn = net.InterfaceAddrs
+		}()
+
+		actualIP := context.ServerIP()
+
+		if actualIP != expectedIP {
+			t.Errorf("%sExpected IP \"%s\", found \"%s\".", testPrefix, expectedIP, actualIP)
 		}
 	}
 }
@@ -407,7 +497,7 @@ func TestMethod(t *testing.T) {
 
 }
 
-func TestPathMatches(t *testing.T) {
+func TestContextPathMatches(t *testing.T) {
 	context := getContextOrFail(t)
 
 	tests := []struct {
@@ -642,8 +732,9 @@ func initTestContext() (Context, error) {
 	if err != nil {
 		return Context{}, err
 	}
+	res := httptest.NewRecorder()
 
-	return Context{Root: http.Dir(os.TempDir()), Req: request}, nil
+	return Context{Root: http.Dir(os.TempDir()), responseHeader: res.Header(), Req: request}, nil
 }
 
 func getContextOrFail(t *testing.T) Context {
@@ -737,14 +828,16 @@ func TestFiles(t *testing.T) {
 
 		// Create directory / files from test case.
 		if test.fileNames != nil {
-			dirPath, err = ioutil.TempDir(fmt.Sprintf("%s", context.Root), "caddy_test")
+			dirPath, err = ioutil.TempDir(fmt.Sprintf("%s", context.Root), "caddy_ctxtest")
 			if err != nil {
+				os.RemoveAll(dirPath)
 				t.Fatalf(testPrefix+"Expected no error creating directory, got: '%s'", err.Error())
 			}
 
 			for _, name := range test.fileNames {
 				absFilePath := filepath.Join(dirPath, name)
 				if err = ioutil.WriteFile(absFilePath, []byte(""), os.ModePerm); err != nil {
+					os.RemoveAll(dirPath)
 					t.Fatalf(testPrefix+"Expected no error creating file, got: '%s'", err.Error())
 				}
 			}
@@ -781,5 +874,37 @@ func TestFiles(t *testing.T) {
 				t.Fatalf(testPrefix+"Expected no error removing directory, got: '%s'", err.Error())
 			}
 		}
+	}
+}
+
+func TestAddLink(t *testing.T) {
+	for name, c := range map[string]struct {
+		input       string
+		expectLinks []string
+	}{
+		"oneLink": {
+			input:       `{{.AddLink "</test.css>; rel=preload"}}`,
+			expectLinks: []string{"</test.css>; rel=preload"},
+		},
+		"multipleLinks": {
+			input:       `{{.AddLink "</test1.css>; rel=preload"}} {{.AddLink "</test2.css>; rel=meta"}}`,
+			expectLinks: []string{"</test1.css>; rel=preload", "</test2.css>; rel=meta"},
+		},
+	} {
+		c := c
+		t.Run(name, func(t *testing.T) {
+			ctx := getContextOrFail(t)
+			tmpl, err := template.New("").Parse(c.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = tmpl.Execute(ioutil.Discard, ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := ctx.responseHeader["Link"]; !reflect.DeepEqual(got, c.expectLinks) {
+				t.Errorf("Result not match: expect %v, but got %v", c.expectLinks, got)
+			}
+		})
 	}
 }

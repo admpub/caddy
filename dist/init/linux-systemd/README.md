@@ -7,8 +7,7 @@ the username of whoever touched the file most recently, for example
 `@wmark re systemd: …`.
 
 The provided file should work with systemd version 219 or later. It might work with earlier versions.
-The easiest way to check your systemd version is to look at the version of the installed package
-(e.g. 'sudo yum info systemd' on RedHat/Fedora systems).
+The easiest way to check your systemd version is to run `systemctl --version`.
 
 ## Instructions
 
@@ -78,7 +77,7 @@ sudo chown -R www-data:www-data /var/www/example.com
 sudo chmod -R 555 /var/www/example.com
 ```
 
-You'll need to explicity configure caddy to serve the site from this location by adding
+You'll need to explicitly configure caddy to serve the site from this location by adding
 the following to your Caddyfile if you haven't already:
 
 ```
@@ -94,7 +93,7 @@ and start caddy:
 ```bash
 sudo cp caddy.service /etc/systemd/system/
 sudo chown root:root /etc/systemd/system/caddy.service
-sudo chmod 744 /etc/systemd/system/caddy.service
+sudo chmod 644 /etc/systemd/system/caddy.service
 sudo systemctl daemon-reload
 sudo systemctl start caddy.service
 ```

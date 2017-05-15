@@ -1,6 +1,7 @@
 package rewrite
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -24,7 +25,8 @@ func TestRewrite(t *testing.T) {
 	regexps := [][]string{
 		{"/reg/", ".*", "/to", ""},
 		{"/r/", "[a-z]+", "/toaz", "!.html|"},
-		{"/url/", "a([a-z0-9]*)s([A-Z]{2})", "/to/{path}", ""},
+		{"/path/", "[a-z0-9]", "/to/{path}", ""},
+		{"/url/", "a([a-z0-9]*)s([A-Z]{2})", "/to/{rewrite_path}", ""},
 		{"/ab/", "ab", "/ab?{query}", ".txt|"},
 		{"/ab/", "ab", "/ab?type=html&{query}", ".html|"},
 		{"/abc/", "ab", "/abc/{file}", ".html|"},
@@ -71,6 +73,8 @@ func TestRewrite(t *testing.T) {
 		{"/r/z", "/toaz"},
 		{"/r/z.html", "/r/z.html"},
 		{"/r/z.js", "/toaz"},
+		{"/path/a1b2c", "/to/path/a1b2c"},
+		{"/path/d3e4f", "/to/path/d3e4f"},
 		{"/url/asAB", "/to/url/asAB"},
 		{"/url/aBsAB", "/url/aBsAB"},
 		{"/url/a00sAB", "/to/url/a00sAB"},
@@ -101,13 +105,14 @@ func TestRewrite(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Test %d: Could not create HTTP request: %v", i, err)
 		}
+		ctx := context.WithValue(req.Context(), httpserver.OriginalURLCtxKey, *req.URL)
+		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
 		rw.ServeHTTP(rec, req)
 
-		if rec.Body.String() != test.expectedTo {
-			t.Errorf("Test %d: Expected URL to be '%s' but was '%s'",
-				i, test.expectedTo, rec.Body.String())
+		if got, want := rec.Body.String(), test.expectedTo; got != want {
+			t.Errorf("Test %d: Expected URL to be '%s' but was '%s'", i, want, got)
 		}
 	}
 }

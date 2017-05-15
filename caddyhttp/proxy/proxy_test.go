@@ -3,6 +3,8 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -16,6 +18,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,14 +29,77 @@ import (
 	"golang.org/x/net/websocket"
 )
 
+// This is a simple wrapper around httptest.NewTLSServer()
+// which forcefully enables (among others) HTTP/2 support.
+// The httptest package only supports HTTP/1.1 by default.
+func newTLSServer(handler http.Handler) *httptest.Server {
+	ts := httptest.NewUnstartedServer(handler)
+	ts.TLS = new(tls.Config)
+	ts.TLS.NextProtos = []string{"h2"}
+	ts.StartTLS()
+	return ts
+}
+
 func TestReverseProxy(t *testing.T) {
 	log.SetOutput(ioutil.Discard)
 	defer log.SetOutput(os.Stderr)
 
-	var requestReceived bool
+	testHeaderValue := []string{"header-value"}
+	testHeaders := http.Header{
+		"X-Header-1": testHeaderValue,
+		"X-Header-2": testHeaderValue,
+		"X-Header-3": testHeaderValue,
+	}
+	testTrailerValue := []string{"trailer-value"}
+	testTrailers := http.Header{
+		"X-Trailer-1": testTrailerValue,
+		"X-Trailer-2": testTrailerValue,
+		"X-Trailer-3": testTrailerValue,
+	}
+	verifyHeaderValues := func(actual http.Header, expected http.Header) bool {
+		if actual == nil {
+			t.Error("Expected headers")
+			return true
+		}
+
+		for k := range expected {
+			if expected.Get(k) != actual.Get(k) {
+				t.Errorf("Expected header '%s' to be proxied properly", k)
+				return true
+			}
+		}
+
+		return false
+	}
+	verifyHeadersTrailers := func(headers http.Header, trailers http.Header) {
+		if verifyHeaderValues(headers, testHeaders) || verifyHeaderValues(trailers, testTrailers) {
+			t.FailNow()
+		}
+	}
+
+	requestReceived := false
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// read the body (even if it's empty) to make Go parse trailers
+		io.Copy(ioutil.Discard, r.Body)
+
+		verifyHeadersTrailers(r.Header, r.Trailer)
 		requestReceived = true
+
+		// Set headers.
+		copyHeader(w.Header(), testHeaders)
+
+		// Only announce one of the trailers to test wether
+		// unannounced trailers are proxied correctly.
+		for k := range testTrailers {
+			w.Header().Set("Trailer", k)
+			break
+		}
+
+		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("Hello, client"))
+
+		// Set trailers.
+		shallowCopyTrailers(w.Header(), testTrailers, true)
 	}))
 	defer backend.Close()
 
@@ -43,18 +109,43 @@ func TestReverseProxy(t *testing.T) {
 		Upstreams: []Upstream{newFakeUpstream(backend.URL, false)},
 	}
 
-	// create request and response recorder
-	r := httptest.NewRequest("GET", "/", nil)
-	w := httptest.NewRecorder()
+	// Create the fake request body.
+	// This will copy "trailersToSet" to r.Trailer right before it is closed and
+	// thus test for us wether unannounced client trailers are proxied correctly.
+	body := &trailerTestStringReader{
+		Reader:        *strings.NewReader("test"),
+		trailersToSet: testTrailers,
+	}
 
+	// Create the fake request with the above body.
+	r := httptest.NewRequest("GET", "/", body)
+	r.Trailer = make(http.Header)
+	body.request = r
+
+	copyHeader(r.Header, testHeaders)
+
+	// Only announce one of the trailers to test wether
+	// unannounced trailers are proxied correctly.
+	for k, v := range testTrailers {
+		r.Trailer[k] = v
+		break
+	}
+
+	w := httptest.NewRecorder()
 	p.ServeHTTP(w, r)
+	res := w.Result()
 
 	if !requestReceived {
 		t.Error("Expected backend to receive request, but it didn't")
 	}
 
+	verifyHeadersTrailers(res.Header, res.Trailer)
+
 	// Make sure {upstream} placeholder is set
-	rr := httpserver.NewResponseRecorder(httptest.NewRecorder())
+	r.Body = ioutil.NopCloser(strings.NewReader("test"))
+	rr := httpserver.NewResponseRecorder(testResponseRecorder{
+		ResponseWriterWrapper: &httpserver.ResponseWriterWrapper{ResponseWriter: httptest.NewRecorder()},
+	})
 	rr.Replacer = httpserver.NewReplacer(r, rr, "-")
 
 	p.ServeHTTP(rr, r)
@@ -64,13 +155,30 @@ func TestReverseProxy(t *testing.T) {
 	}
 }
 
+// trailerTestStringReader is used to test unannounced trailers coming
+// from a client which should properly be proxied to the upstream.
+type trailerTestStringReader struct {
+	strings.Reader
+	request       *http.Request
+	trailersToSet http.Header
+}
+
+var _ io.ReadCloser = &trailerTestStringReader{}
+
+func (r *trailerTestStringReader) Close() error {
+	copyHeader(r.request.Trailer, r.trailersToSet)
+	return nil
+}
+
 func TestReverseProxyInsecureSkipVerify(t *testing.T) {
 	log.SetOutput(ioutil.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	var requestReceived bool
-	backend := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var requestWasHTTP2 bool
+	backend := newTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestReceived = true
+		requestWasHTTP2 = r.ProtoAtLeast(2, 0)
 		w.Write([]byte("Hello, client"))
 	}))
 	defer backend.Close()
@@ -90,6 +198,77 @@ func TestReverseProxyInsecureSkipVerify(t *testing.T) {
 	if !requestReceived {
 		t.Error("Even with insecure HTTPS, expected backend to receive request, but it didn't")
 	}
+	if !requestWasHTTP2 {
+		t.Error("Even with insecure HTTPS, expected proxy to use HTTP/2")
+	}
+}
+
+// This test will fail when using the race detector without atomic reads &
+// writes of UpstreamHost.Conns and UpstreamHost.Unhealthy.
+func TestReverseProxyMaxConnLimit(t *testing.T) {
+	log.SetOutput(ioutil.Discard)
+	defer log.SetOutput(os.Stderr)
+
+	const MaxTestConns = 2
+	connReceived := make(chan bool, MaxTestConns)
+	connContinue := make(chan bool)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connReceived <- true
+		<-connContinue
+	}))
+	defer backend.Close()
+
+	su, err := NewStaticUpstreams(caddyfile.NewDispenser("Testfile", strings.NewReader(`
+		proxy / `+backend.URL+` {
+			max_conns `+fmt.Sprint(MaxTestConns)+`
+		}
+	`)), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// set up proxy
+	p := &Proxy{
+		Next:      httpserver.EmptyNext, // prevents panic in some cases when test fails
+		Upstreams: su,
+	}
+
+	var jobs sync.WaitGroup
+
+	for i := 0; i < MaxTestConns; i++ {
+		jobs.Add(1)
+		go func(i int) {
+			defer jobs.Done()
+			w := httptest.NewRecorder()
+			code, err := p.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+			if err != nil {
+				t.Errorf("Request %d failed: %v", i, err)
+			} else if code != 0 {
+				t.Errorf("Bad return code for request %d: %d", i, code)
+			} else if w.Code != 200 {
+				t.Errorf("Bad statuc code for request %d: %d", i, w.Code)
+			}
+		}(i)
+	}
+	// Wait for all the requests to hit the backend.
+	for i := 0; i < MaxTestConns; i++ {
+		<-connReceived
+	}
+
+	// Now we should have MaxTestConns requests connected and sitting on the backend
+	// server.  Verify that the next request is rejected.
+	w := httptest.NewRecorder()
+	code, err := p.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if code != http.StatusBadGateway {
+		t.Errorf("Expected request to be rejected, but got: %d [%v]\nStatus code: %d",
+			code, err, w.Code)
+	}
+
+	// Now let all the requests complete and verify the status codes for those:
+	close(connContinue)
+
+	// Wait for the initial requests to finish and check their results.
+	jobs.Wait()
 }
 
 func TestWebSocketReverseProxyNonHijackerPanic(t *testing.T) {
@@ -106,7 +285,7 @@ func TestWebSocketReverseProxyNonHijackerPanic(t *testing.T) {
 	defer wsNop.Close()
 
 	// Get proxy to use for the test
-	p := newWebSocketTestProxy(wsNop.URL)
+	p := newWebSocketTestProxy(wsNop.URL, false)
 
 	// Create client request
 	r := httptest.NewRequest("GET", "/", nil)
@@ -126,12 +305,12 @@ func TestWebSocketReverseProxyNonHijackerPanic(t *testing.T) {
 func TestWebSocketReverseProxyServeHTTPHandler(t *testing.T) {
 	// No-op websocket backend simply allows the WS connection to be
 	// accepted then it will be immediately closed. Perfect for testing.
-	var connCount int32
-	wsNop := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) { atomic.AddInt32(&connCount, 1) }))
+	accepted := make(chan struct{})
+	wsNop := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) { close(accepted) }))
 	defer wsNop.Close()
 
 	// Get proxy to use for the test
-	p := newWebSocketTestProxy(wsNop.URL)
+	p := newWebSocketTestProxy(wsNop.URL, false)
 
 	// Create client request
 	r := httptest.NewRequest("GET", "/", nil)
@@ -158,8 +337,14 @@ func TestWebSocketReverseProxyServeHTTPHandler(t *testing.T) {
 	if !bytes.Equal(actual, expected) {
 		t.Errorf("Expected backend to accept response:\n'%s'\nActually got:\n'%s'", expected, actual)
 	}
-	if atomic.LoadInt32(&connCount) != 1 {
-		t.Errorf("Expected 1 websocket connection, got %d", connCount)
+
+	// wait a minute for backend handling, see issue 1654.
+	time.Sleep(10 * time.Millisecond)
+
+	select {
+	case <-accepted:
+	default:
+		t.Error("Expect a accepted websocket connection, but not")
 	}
 }
 
@@ -172,7 +357,7 @@ func TestWebSocketReverseProxyFromWSClient(t *testing.T) {
 	defer wsEcho.Close()
 
 	// Get proxy to use for the test
-	p := newWebSocketTestProxy(wsEcho.URL)
+	p := newWebSocketTestProxy(wsEcho.URL, false)
 
 	// This is a full end-end test, so the proxy handler
 	// has to be part of a server listening on a port. Our
@@ -186,6 +371,52 @@ func TestWebSocketReverseProxyFromWSClient(t *testing.T) {
 	// Set up WebSocket client
 	url := strings.Replace(echoProxy.URL, "http://", "ws://", 1)
 	ws, err := websocket.Dial(url, "", echoProxy.URL)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	// Send test message
+	trialMsg := "Is it working?"
+
+	if sendErr := websocket.Message.Send(ws, trialMsg); sendErr != nil {
+		t.Fatal(sendErr)
+	}
+
+	// It should be echoed back to us
+	var actualMsg string
+
+	if rcvErr := websocket.Message.Receive(ws, &actualMsg); rcvErr != nil {
+		t.Fatal(rcvErr)
+	}
+
+	if actualMsg != trialMsg {
+		t.Errorf("Expected '%s' but got '%s' instead", trialMsg, actualMsg)
+	}
+}
+
+func TestWebSocketReverseProxyFromWSSClient(t *testing.T) {
+	wsEcho := newTLSServer(websocket.Handler(func(ws *websocket.Conn) {
+		io.Copy(ws, ws)
+	}))
+	defer wsEcho.Close()
+
+	p := newWebSocketTestProxy(wsEcho.URL, true)
+
+	echoProxy := newTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p.ServeHTTP(w, r)
+	}))
+	defer echoProxy.Close()
+
+	// Set up WebSocket client
+	url := strings.Replace(echoProxy.URL, "https://", "wss://", 1)
+	wsCfg, err := websocket.NewConfig(url, echoProxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsCfg.TlsConfig = &tls.Config{InsecureSkipVerify: true}
+	ws, err := websocket.DialConfig(wsCfg)
 
 	if err != nil {
 		t.Fatal(err)
@@ -229,10 +460,11 @@ func TestUnixSocketProxy(t *testing.T) {
 	}))
 
 	// Get absolute path for unix: socket
-	dir, err := ioutil.TempDir("", "caddy_test")
+	dir, err := ioutil.TempDir("", "caddy_proxytest")
 	if err != nil {
 		t.Fatalf("Failed to make temp dir to contain unix socket. %v", err)
 	}
+	defer os.RemoveAll(dir)
 	socketPath := filepath.Join(dir, "test_socket")
 
 	// Change httptest.Server listener to listen to unix: socket
@@ -246,7 +478,7 @@ func TestUnixSocketProxy(t *testing.T) {
 	defer ts.Close()
 
 	url := strings.Replace(ts.URL, "http://", "unix:", 1)
-	p := newWebSocketTestProxy(url)
+	p := newWebSocketTestProxy(url, false)
 
 	echoProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.ServeHTTP(w, r)
@@ -283,20 +515,21 @@ func GetHTTPProxy(messageFormat string, prefix string) (*Proxy, *httptest.Server
 	return newPrefixedWebSocketTestProxy(ts.URL, prefix), ts
 }
 
-func GetSocketProxy(messageFormat string, prefix string) (*Proxy, *httptest.Server, error) {
+func GetSocketProxy(messageFormat string, prefix string) (*Proxy, *httptest.Server, string, error) {
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, messageFormat, r.URL.String())
 	}))
 
-	dir, err := ioutil.TempDir("", "caddy_test")
+	dir, err := ioutil.TempDir("", "caddy_proxytest")
 	if err != nil {
-		return nil, nil, fmt.Errorf("Failed to make temp dir to contain unix socket. %v", err)
+		return nil, nil, dir, fmt.Errorf("Failed to make temp dir to contain unix socket. %v", err)
 	}
 	socketPath := filepath.Join(dir, "test_socket")
 
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Unable to listen: %v", err)
+		os.RemoveAll(dir)
+		return nil, nil, dir, fmt.Errorf("Unable to listen: %v", err)
 	}
 	ts.Listener = ln
 
@@ -304,7 +537,7 @@ func GetSocketProxy(messageFormat string, prefix string) (*Proxy, *httptest.Serv
 
 	tsURL := strings.Replace(ts.URL, "http://", "unix:", 1)
 
-	return newPrefixedWebSocketTestProxy(tsURL, prefix), ts, nil
+	return newPrefixedWebSocketTestProxy(tsURL, prefix), ts, dir, nil
 }
 
 func GetTestServerMessage(p *Proxy, ts *httptest.Server, path string) (string, error) {
@@ -370,8 +603,7 @@ func TestUnixSocketProxyPaths(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		p, ts, err := GetSocketProxy(greeting, test.prefix)
-
+		p, ts, tmpdir, err := GetSocketProxy(greeting, test.prefix)
 		if err != nil {
 			t.Fatalf("Getting socket proxy failed - %v", err)
 		}
@@ -379,12 +611,15 @@ func TestUnixSocketProxyPaths(t *testing.T) {
 		actualMsg, err := GetTestServerMessage(p, ts, test.url)
 
 		if err != nil {
+			os.RemoveAll(tmpdir)
 			t.Fatalf("Getting server message failed - %v", err)
 		}
 
 		if actualMsg != test.expected {
 			t.Errorf("Expected '%s' but got '%s' instead", test.expected, actualMsg)
 		}
+
+		os.RemoveAll(tmpdir)
 	}
 }
 
@@ -434,43 +669,18 @@ func TestUpstreamHeadersUpdate(t *testing.T) {
 
 	replacer := httpserver.NewReplacer(r, nil, "")
 
-	headerKey := "Merge-Me"
-	got := actualHeaders[headerKey]
-	expect := []string{"Initial", "Merge-Value"}
-	if !reflect.DeepEqual(got, expect) {
-		t.Errorf("Request sent to upstream backend does not contain expected %v header: expect %v, but got %v",
-			headerKey, expect, got)
-	}
-
-	headerKey = "Add-Me"
-	got = actualHeaders[headerKey]
-	expect = []string{"Add-Value"}
-	if !reflect.DeepEqual(got, expect) {
-		t.Errorf("Request sent to upstream backend does not contain expected %v header: expect %v, but got %v",
-			headerKey, expect, got)
-	}
-
-	headerKey = "Add-Empty"
-	if _, ok := actualHeaders[headerKey]; ok {
-		t.Errorf("Request sent to upstream backend should not contain empty %v header", headerKey)
-	}
-
-	headerKey = "Remove-Me"
-	if _, ok := actualHeaders[headerKey]; ok {
-		t.Errorf("Request sent to upstream backend should not contain %v header", headerKey)
-	}
-
-	headerKey = "Replace-Me"
-	got = actualHeaders[headerKey]
-	expect = []string{replacer.Replace("{hostname}")}
-	if !reflect.DeepEqual(got, expect) {
-		t.Errorf("Request sent to upstream backend does not contain expected %v header: expect %v, but got %v",
-			headerKey, expect, got)
-	}
-
-	headerKey = "Clear-Me"
-	if _, ok := actualHeaders[headerKey]; ok {
-		t.Errorf("Request sent to upstream backend should not contain empty %v header", headerKey)
+	for headerKey, expect := range map[string][]string{
+		"Merge-Me":   {"Initial", "Merge-Value"},
+		"Add-Me":     {"Add-Value"},
+		"Add-Empty":  nil,
+		"Remove-Me":  nil,
+		"Replace-Me": {replacer.Replace("{hostname}")},
+		"Clear-Me":   nil,
+	} {
+		if got := actualHeaders[headerKey]; !reflect.DeepEqual(got, expect) {
+			t.Errorf("Upstream request does not contain expected %v header: expect %v, but got %v",
+				headerKey, expect, got)
+		}
 	}
 
 	if actualHost != expectHost {
@@ -519,49 +729,18 @@ func TestDownstreamHeadersUpdate(t *testing.T) {
 	replacer := httpserver.NewReplacer(r, nil, "")
 	actualHeaders := w.Header()
 
-	headerKey := "Merge-Me"
-	got := actualHeaders[headerKey]
-	expect := []string{"Initial", "Merge-Value"}
-	if !reflect.DeepEqual(got, expect) {
-		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
-			headerKey, expect, got)
-	}
-
-	headerKey = "Add-Me"
-	got = actualHeaders[headerKey]
-	expect = []string{"Add-Value"}
-	if !reflect.DeepEqual(got, expect) {
-		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
-			headerKey, expect, got)
-	}
-
-	headerKey = "Remove-Me"
-	if _, ok := actualHeaders[headerKey]; ok {
-		t.Errorf("Downstream response should not contain %v header received from upstream", headerKey)
-	}
-
-	headerKey = "Replace-Me"
-	got = actualHeaders[headerKey]
-	expect = []string{replacer.Replace("{hostname}")}
-	if !reflect.DeepEqual(got, expect) {
-		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
-			headerKey, expect, got)
-	}
-
-	headerKey = "Content-Type"
-	got = actualHeaders[headerKey]
-	expect = []string{"text/css"}
-	if !reflect.DeepEqual(got, expect) {
-		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
-			headerKey, expect, got)
-	}
-
-	headerKey = "Overwrite-Me"
-	got = actualHeaders[headerKey]
-	expect = []string{"Overwrite-Value"}
-	if !reflect.DeepEqual(got, expect) {
-		t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
-			headerKey, expect, got)
+	for headerKey, expect := range map[string][]string{
+		"Merge-Me":     {"Initial", "Merge-Value"},
+		"Add-Me":       {"Add-Value"},
+		"Remove-Me":    nil,
+		"Replace-Me":   {replacer.Replace("{hostname}")},
+		"Content-Type": {"text/css"},
+		"Overwrite-Me": {"Overwrite-Value"},
+	} {
+		if got := actualHeaders[headerKey]; !reflect.DeepEqual(got, expect) {
+			t.Errorf("Downstream response does not contain expected %s header: expect %v, but got %v",
+				headerKey, expect, got)
+		}
 	}
 }
 
@@ -829,6 +1008,43 @@ func TestProxyDirectorURL(t *testing.T) {
 			targetURL:  `https://localhost:2021/t/`,
 			expectURL:  `https://localhost:2021/t/test/`,
 		},
+		{
+			requestURL: `http://localhost:2020/test/mypath`,
+			targetURL:  `https://localhost:2021/t/`,
+			expectURL:  `https://localhost:2021/t/mypath`,
+			without:    "/test",
+		},
+		{
+			requestURL: `http://localhost:2020/%2C`,
+			targetURL:  `https://localhost:2021/t/`,
+			expectURL:  `https://localhost:2021/t/%2C`,
+		},
+		{
+			requestURL: `http://localhost:2020/%2C/`,
+			targetURL:  `https://localhost:2021/t/`,
+			expectURL:  `https://localhost:2021/t/%2C/`,
+		},
+		{
+			requestURL: `http://localhost:2020/test`,
+			targetURL:  `https://localhost:2021/%2C`,
+			expectURL:  `https://localhost:2021/%2C/test`,
+		},
+		{
+			requestURL: `http://localhost:2020/%2C`,
+			targetURL:  `https://localhost:2021/%2C`,
+			expectURL:  `https://localhost:2021/%2C/%2C`,
+		},
+		{
+			requestURL: `http://localhost:2020/%2F/test`,
+			targetURL:  `https://localhost:2021/`,
+			expectURL:  `https://localhost:2021/%2F/test`,
+		},
+		{
+			requestURL: `http://localhost:2020/test/%2F/mypath`,
+			targetURL:  `https://localhost:2021/t/`,
+			expectURL:  `https://localhost:2021/t/%2F/mypath`,
+			without:    "/test",
+		},
 	} {
 		targetURL, err := url.Parse(c.targetURL)
 		if err != nil {
@@ -868,7 +1084,7 @@ func TestReverseProxyRetry(t *testing.T) {
 		try_duration 5s
 		try_interval 250ms
 	}
-	`)))
+	`)), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -904,6 +1120,137 @@ func TestReverseProxyRetry(t *testing.T) {
 	if string(b) != testcase {
 		t.Fatalf("string(b) = %s, want %s", string(b), testcase)
 	}
+}
+
+func TestReverseProxyLargeBody(t *testing.T) {
+	log.SetOutput(ioutil.Discard)
+	defer log.SetOutput(os.Stderr)
+
+	// set up proxy
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(ioutil.Discard, r.Body)
+		r.Body.Close()
+	}))
+	defer backend.Close()
+
+	su, err := NewStaticUpstreams(caddyfile.NewDispenser("Testfile", strings.NewReader(`proxy / `+backend.URL)), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Proxy{
+		Next:      httpserver.EmptyNext, // prevents panic in some cases when test fails
+		Upstreams: su,
+	}
+
+	// middle is required to simulate closable downstream request body
+	middle := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, err = p.ServeHTTP(w, r)
+		if err != nil {
+			t.Error(err)
+		}
+	}))
+	defer middle.Close()
+
+	// Our request body will be 100MB
+	bodySize := uint64(100 * 1000 * 1000)
+
+	// We want to see how much memory the proxy module requires for this request.
+	// So lets record the mem stats before we start it.
+	begMemstats := &runtime.MemStats{}
+	runtime.ReadMemStats(begMemstats)
+
+	r, err := http.NewRequest("POST", middle.URL, &noopReader{len: bodySize})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	// Finally we need the mem stats after the request is done...
+	endMemstats := &runtime.MemStats{}
+	runtime.ReadMemStats(endMemstats)
+
+	// ...to calculate the total amount of allocated memory during the request.
+	totalAlloc := endMemstats.TotalAlloc - begMemstats.TotalAlloc
+
+	// If that's as much as the size of the body itself it's a serious sign that the
+	// request was not "streamed" to the upstream without buffering it first.
+	if totalAlloc >= bodySize {
+		t.Fatalf("proxy allocated too much memory: %d bytes", totalAlloc)
+	}
+}
+
+func TestCancelRequest(t *testing.T) {
+	reqInFlight := make(chan struct{})
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(reqInFlight) // cause the client to cancel its request
+
+		select {
+		case <-time.After(10 * time.Second):
+			t.Error("Handler never saw CloseNotify")
+			return
+		case <-w.(http.CloseNotifier).CloseNotify():
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Hello, client"))
+	}))
+	defer backend.Close()
+
+	// set up proxy
+	p := &Proxy{
+		Next:      httpserver.EmptyNext, // prevents panic in some cases when test fails
+		Upstreams: []Upstream{newFakeUpstream(backend.URL, false)},
+	}
+
+	// setup request with cancel ctx
+	req := httptest.NewRequest("GET", "/", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	// wait for canceling the request
+	go func() {
+		<-reqInFlight
+		cancel()
+	}()
+
+	rec := httptest.NewRecorder()
+	status, err := p.ServeHTTP(rec, req)
+	expectedStatus, expectErr := http.StatusBadGateway, context.Canceled
+	if status != expectedStatus || err != expectErr {
+		t.Errorf("expect proxy handle return status[%d] with error[%v], but got status[%d] with error[%v]",
+			expectedStatus, expectErr, status, err)
+	}
+	if body := rec.Body.String(); body != "" {
+		t.Errorf("expect a blank response, but got %q", body)
+	}
+}
+
+type noopReader struct {
+	len uint64
+	pos uint64
+}
+
+var _ io.Reader = &noopReader{}
+
+func (r *noopReader) Read(b []byte) (int, error) {
+	if r.pos >= r.len {
+		return 0, io.EOF
+	}
+	n := int(r.len - r.pos)
+	if n > len(b) {
+		n = len(b)
+	}
+	for i := range b[:n] {
+		b[i] = 0
+	}
+	r.pos += uint64(n)
+	return n, nil
 }
 
 func newFakeUpstream(name string, insecure bool) *fakeUpstream {
@@ -950,15 +1297,21 @@ func (u *fakeUpstream) Select(r *http.Request) *UpstreamHost {
 func (u *fakeUpstream) AllowedPath(requestPath string) bool { return true }
 func (u *fakeUpstream) GetTryDuration() time.Duration       { return 1 * time.Second }
 func (u *fakeUpstream) GetTryInterval() time.Duration       { return 250 * time.Millisecond }
+func (u *fakeUpstream) GetHostCount() int                   { return 1 }
+func (u *fakeUpstream) Stop() error                         { return nil }
 
 // newWebSocketTestProxy returns a test proxy that will
 // redirect to the specified backendAddr. The function
 // also sets up the rules/environment for testing WebSocket
 // proxy.
-func newWebSocketTestProxy(backendAddr string) *Proxy {
+func newWebSocketTestProxy(backendAddr string, insecure bool) *Proxy {
 	return &Proxy{
-		Next:      httpserver.EmptyNext, // prevents panic in some cases when test fails
-		Upstreams: []Upstream{&fakeWsUpstream{name: backendAddr, without: ""}},
+		Next: httpserver.EmptyNext, // prevents panic in some cases when test fails
+		Upstreams: []Upstream{&fakeWsUpstream{
+			name:     backendAddr,
+			without:  "",
+			insecure: insecure,
+		}},
 	}
 }
 
@@ -970,8 +1323,9 @@ func newPrefixedWebSocketTestProxy(backendAddr string, prefix string) *Proxy {
 }
 
 type fakeWsUpstream struct {
-	name    string
-	without string
+	name     string
+	without  string
+	insecure bool
 }
 
 func (u *fakeWsUpstream) From() string {
@@ -980,18 +1334,24 @@ func (u *fakeWsUpstream) From() string {
 
 func (u *fakeWsUpstream) Select(r *http.Request) *UpstreamHost {
 	uri, _ := url.Parse(u.name)
-	return &UpstreamHost{
+	host := &UpstreamHost{
 		Name:         u.name,
 		ReverseProxy: NewSingleHostReverseProxy(uri, u.without, http.DefaultMaxIdleConnsPerHost),
 		UpstreamHeaders: http.Header{
 			"Connection": {"{>Connection}"},
 			"Upgrade":    {"{>Upgrade}"}},
 	}
+	if u.insecure {
+		host.ReverseProxy.UseInsecureTransport()
+	}
+	return host
 }
 
 func (u *fakeWsUpstream) AllowedPath(requestPath string) bool { return true }
 func (u *fakeWsUpstream) GetTryDuration() time.Duration       { return 1 * time.Second }
 func (u *fakeWsUpstream) GetTryInterval() time.Duration       { return 250 * time.Millisecond }
+func (u *fakeWsUpstream) GetHostCount() int                   { return 1 }
+func (u *fakeWsUpstream) Stop() error                         { return nil }
 
 // recorderHijacker is a ResponseRecorder that can
 // be hijacked.
@@ -1017,6 +1377,17 @@ func (c *fakeConn) SetWriteDeadline(t time.Time) error { return nil }
 func (c *fakeConn) Close() error                       { return nil }
 func (c *fakeConn) Read(b []byte) (int, error)         { return c.readBuf.Read(b) }
 func (c *fakeConn) Write(b []byte) (int, error)        { return c.writeBuf.Write(b) }
+
+// testResponseRecorder wraps `httptest.ResponseRecorder`,
+// also implements `http.CloseNotifier`, `http.Hijacker` and `http.Pusher`.
+type testResponseRecorder struct {
+	*httpserver.ResponseWriterWrapper
+}
+
+func (testResponseRecorder) CloseNotify() <-chan bool { return nil }
+
+// Interface guards
+var _ httpserver.HTTPInterfaces = testResponseRecorder{}
 
 func BenchmarkProxy(b *testing.B) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

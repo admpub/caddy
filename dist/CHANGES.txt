@@ -1,5 +1,89 @@
 CHANGES
 
+0.10.2 (May 2, 2017)
+- Hot fix for rule paths of "/" so that they match every request
+- fastcgi: Match request paths that don't start with "/" even if rule does
+
+
+0.10.1 (May 1, 2017)
+- Reduced memory usage for gzip, templates, and MITM detection
+- Fixed automatic HTTP->HTTPS redirects for sites with wildcard labels
+- proxy: Fix 'without' subdirective
+- A few other minor bug fixes and improvements
+
+
+0.10 (April 20, 2017)
+- Built on Go 1.8.1
+- HTTPS interception detection
+- Updated QUIC
+- SIGUSR1 (reload) now works with QUIC servers
+- New 'push' directive for HTTP/2 server push
+- New 'index' directive to change the names of index files
+- New -http-port and -https-port flags to change protocol ports
+- New -disable-http-challenge and -disable-tls-sni-challenge flags
+- New event hook plugin type
+- New listener middleware plugin type
+- New placeholders for cookie, query, and rewritten URI values
+- basicauth: Ability to customize realm
+- browse: Default template now sorts by name with directories first
+- errors, log: Roll all logs by default
+- errors, log: Ability to write to remote syslog
+- errors, log: Standardized, simplified directive syntax
+- log: Patched common log format by adding missing "-"
+- proxy: New 'max_conns' setting to limit connections to upstreams
+- proxy: New 'first' load balancing policy for first available host
+- proxy: Health checks respect Host and insecure_skip_verify settings
+- templates: New .RandomString action to add random padding to page
+- timeouts: Disabled default HTTP timeouts
+- tls: Settings now apply per-site rather than for entire listener
+- tls: New 'alpn' setting to disable either HTTP/2 or HTTP/1.1 on per-site basis
+- tls: Added curve X25519
+- tls: Added ChaCha20-Poly1305 cipher suites
+- tls: Renamed muststaple to must_staple
+- tls: Setting max_certs obtains certs during handshakes for all hostnames
+- Dozens of miscellaneous bug fixes and improvements
+- New website
+- New build infrastructure
+- New deployment system
+
+
+0.9.5 (January 24, 2017)
+- New -validate flag to only check a Caddyfile, then exit
+- New {when_iso} placeholder for timestamp ISO 8601 in UTC
+- New {rewrite_path} and {rewrite_path_escaped} placeholders
+- New 'timeouts' directive to configure or disable HTTP timeouts
+- HTTP-level timeouts enabled by default
+- basicauth: Authorization header stripped upon successful login
+- browse: Added textbox to filter listing in default template
+- browse: Sanitize file names and links in default template
+- browse: Ensure active Caddyfile is hidden regardless of cwd
+- fastcgi: New 'root' property, mainly for use with containers
+- markdown: Apply some front matter fields as <meta> tags
+- proxy: Fixed HTTP/2 upstream to backend; honors -http CLI flag
+- proxy: Fixed websockets over HTTPS
+- proxy: Reduced memory usage and improved performance
+- proxy: Added support for HTTP trailers
+- tls: Fixed deadlock that affected some background renewals
+- Several other smaller bugs squashed and improvements made
+
+
+0.9.4 (December 21, 2016)
+- Updated QUIC
+- New maxrequestbody directive to limit size of request body
+- New {latency_ms} placeholder for latency always in ms
+- Serve statically compressed .gz and .br files
+- fastcgi: Support for multiple backends with basic load balancing
+- proxy: Fixed handling of encoded 'without' paths
+- proxy: Preserve trailing slash if present in request
+- proxy: Fix HTTP/2 upstreams
+- templates: New .Files action to list files in a directory
+- templates: .Include can now pass arguments to included file
+- tls: Added ability to customize preferred curves
+- tls: Added support for Must-Staple on managed certificates
+- tls: Fixed subtle edge case bug with TLS-SNI challenge
+- Lots of minor fixes and improvements
+
+
 0.9.3 (September 28, 2016)
 - Updated QUIC to newer version
 - import: Glob pattern matching 0 files is no longer an error

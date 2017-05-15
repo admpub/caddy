@@ -47,10 +47,6 @@ func To(fs http.FileSystem, r *http.Request, to string, replacer httpserver.Repl
 		return RewriteIgnored
 	}
 
-	// take note of this rewrite for internal use by fastcgi
-	// all we need is the URI, not full URL
-	r.Header.Set(headerFieldName, r.URL.RequestURI())
-
 	// perform rewrite
 	r.URL.Path = u.Path
 	if query != "" {

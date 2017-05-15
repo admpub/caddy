@@ -4,8 +4,6 @@
 package header
 
 import (
-	"bufio"
-	"net"
 	"net/http"
 	"strings"
 
@@ -23,7 +21,9 @@ type Headers struct {
 // setting headers on the response according to the configured rules.
 func (h Headers) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
 	replacer := httpserver.NewReplacer(r, nil, "")
-	rww := &responseWriterWrapper{w: w}
+	rww := &responseWriterWrapper{
+		ResponseWriterWrapper: &httpserver.ResponseWriterWrapper{ResponseWriter: w},
+	}
 	for _, rule := range h.Rules {
 		if httpserver.Path(r.URL.Path).Matches(rule.Path) {
 			for name := range rule.Headers {
@@ -62,20 +62,20 @@ type headerOperation func(http.Header)
 // responseWriterWrapper wraps the real ResponseWriter.
 // It defers header operations until writeHeader
 type responseWriterWrapper struct {
-	w           http.ResponseWriter
+	*httpserver.ResponseWriterWrapper
 	ops         []headerOperation
 	wroteHeader bool
 }
 
 func (rww *responseWriterWrapper) Header() http.Header {
-	return rww.w.Header()
+	return rww.ResponseWriterWrapper.Header()
 }
 
 func (rww *responseWriterWrapper) Write(d []byte) (int, error) {
 	if !rww.wroteHeader {
 		rww.WriteHeader(http.StatusOK)
 	}
-	return rww.w.Write(d)
+	return rww.ResponseWriterWrapper.Write(d)
 }
 
 func (rww *responseWriterWrapper) WriteHeader(status int) {
@@ -91,7 +91,7 @@ func (rww *responseWriterWrapper) WriteHeader(status int) {
 		op(h)
 	}
 
-	rww.w.WriteHeader(status)
+	rww.ResponseWriterWrapper.WriteHeader(status)
 }
 
 // delHeader deletes the existing header according to the key
@@ -106,31 +106,5 @@ func (rww *responseWriterWrapper) delHeader(key string) {
 	})
 }
 
-// Hijack implements http.Hijacker. It simply wraps the underlying
-// ResponseWriter's Hijack method if there is one, or returns an error.
-func (rww *responseWriterWrapper) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hj, ok := rww.w.(http.Hijacker); ok {
-		return hj.Hijack()
-	}
-	return nil, nil, httpserver.NonHijackerError{Underlying: rww.w}
-}
-
-// Flush implements http.Flusher. It simply wraps the underlying
-// ResponseWriter's Flush method if there is one, or panics.
-func (rww *responseWriterWrapper) Flush() {
-	if f, ok := rww.w.(http.Flusher); ok {
-		f.Flush()
-	} else {
-		panic(httpserver.NonFlusherError{Underlying: rww.w}) // should be recovered at the beginning of middleware stack
-	}
-}
-
-// CloseNotify implements http.CloseNotifier.
-// It just inherits the underlying ResponseWriter's CloseNotify method.
-// It panics if the underlying ResponseWriter is not a CloseNotifier.
-func (rww *responseWriterWrapper) CloseNotify() <-chan bool {
-	if cn, ok := rww.w.(http.CloseNotifier); ok {
-		return cn.CloseNotify()
-	}
-	panic(httpserver.NonCloseNotifierError{Underlying: rww.w})
-}
+// Interface guards
+var _ httpserver.HTTPInterfaces = (*responseWriterWrapper)(nil)

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mholt/caddy"
 )
 
 // requestReplacer is a strings.Replacer which is used to
@@ -22,6 +24,8 @@ var requestReplacer = strings.NewReplacer(
 	"\r", "\\r",
 	"\n", "\\n",
 )
+
+var now = time.Now
 
 // Replacer is a type which can replace placeholder
 // substrings in a string with actual values from a
@@ -196,6 +200,19 @@ func (r *replacer) getSubstitution(key string) string {
 			}
 		}
 	}
+	// next check for cookies
+	if key[1] == '~' {
+		name := key[2 : len(key)-1]
+		if cookie, err := r.request.Cookie(name); err == nil {
+			return cookie.Value
+		}
+	}
+	// next check for query argument
+	if key[1] == '?' {
+		query := r.request.URL.Query()
+		name := key[2 : len(key)-1]
+		return query.Get(name)
+	}
 
 	// search default replacements in the end
 	switch key {
@@ -221,15 +238,24 @@ func (r *replacer) getSubstitution(key string) string {
 		}
 		return host
 	case "{path}":
-		return r.request.URL.Path
+		u, _ := r.request.Context().Value(OriginalURLCtxKey).(url.URL)
+		return u.Path
 	case "{path_escaped}":
+		u, _ := r.request.Context().Value(OriginalURLCtxKey).(url.URL)
+		return url.QueryEscape(u.Path)
+	case "{rewrite_path}":
+		return r.request.URL.Path
+	case "{rewrite_path_escaped}":
 		return url.QueryEscape(r.request.URL.Path)
 	case "{query}":
-		return r.request.URL.RawQuery
+		u, _ := r.request.Context().Value(OriginalURLCtxKey).(url.URL)
+		return u.RawQuery
 	case "{query_escaped}":
-		return url.QueryEscape(r.request.URL.RawQuery)
+		u, _ := r.request.Context().Value(OriginalURLCtxKey).(url.URL)
+		return url.QueryEscape(u.RawQuery)
 	case "{fragment}":
-		return r.request.URL.Fragment
+		u, _ := r.request.Context().Value(OriginalURLCtxKey).(url.URL)
+		return u.Fragment
 	case "{proto}":
 		return r.request.Proto
 	case "{remote}":
@@ -245,11 +271,19 @@ func (r *replacer) getSubstitution(key string) string {
 		}
 		return port
 	case "{uri}":
-		return r.request.URL.RequestURI()
+		u, _ := r.request.Context().Value(OriginalURLCtxKey).(url.URL)
+		return u.RequestURI()
 	case "{uri_escaped}":
+		u, _ := r.request.Context().Value(OriginalURLCtxKey).(url.URL)
+		return url.QueryEscape(u.RequestURI())
+	case "{rewrite_uri}":
+		return r.request.URL.RequestURI()
+	case "{rewrite_uri_escaped}":
 		return url.QueryEscape(r.request.URL.RequestURI())
 	case "{when}":
-		return time.Now().Format(timeFormat)
+		return now().Format(timeFormat)
+	case "{when_iso}":
+		return now().UTC().Format(timeFormatISOUTC)
 	case "{file}":
 		_, file := path.Split(r.request.URL.Path)
 		return file
@@ -268,11 +302,20 @@ func (r *replacer) getSubstitution(key string) string {
 		}
 		_, err := ioutil.ReadAll(r.request.Body)
 		if err != nil {
-			if _, ok := err.(MaxBytesExceeded); ok {
+			if err == MaxBytesExceededErr {
 				return r.emptyValue
 			}
 		}
 		return requestReplacer.Replace(r.requestBody.String())
+	case "{mitm}":
+		if val, ok := r.request.Context().Value(caddy.CtxKey("mitm")).(bool); ok {
+			if val {
+				return "likely"
+			}
+
+			return "unlikely"
+		}
+		return "unknown"
 	case "{status}":
 		if r.responseRecorder == nil {
 			return r.emptyValue
@@ -311,6 +354,7 @@ func (r *replacer) Set(key, value string) {
 
 const (
 	timeFormat        = "02/Jan/2006:15:04:05 -0700"
+	timeFormatISOUTC  = "2006-01-02T15:04:05Z" // ISO 8601 with timezone to be assumed as UTC
 	headerContentType = "Content-Type"
 	contentTypeJSON   = "application/json"
 	contentTypeXML    = "application/xml"

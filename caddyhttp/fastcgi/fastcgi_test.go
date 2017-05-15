@@ -1,16 +1,18 @@
 package fastcgi
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/http/fcgi"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mholt/caddy/caddyhttp/httpserver"
 )
 
 func TestServeHTTP(t *testing.T) {
@@ -131,6 +133,8 @@ func TestPersistent(t *testing.T) {
 					if err != nil {
 						t.Errorf("Unable to create request: %v", err)
 					}
+					ctx := context.WithValue(r.Context(), httpserver.OriginalURLCtxKey, *r.URL)
+					r = r.WithContext(ctx)
 					w := httptest.NewRecorder()
 
 					status, err := handler.ServeHTTP(w, r)
@@ -223,13 +227,13 @@ func TestBuildEnv(t *testing.T) {
 	}
 
 	rule := Rule{}
-	url, err := url.Parse("http://localhost:2015/fgci_test.php?test=blabla")
+	url, err := url.Parse("http://localhost:2015/fgci_test.php?test=foobar")
 	if err != nil {
 		t.Error("Unexpected error:", err.Error())
 	}
 
 	var newReq = func() *http.Request {
-		return &http.Request{
+		r := http.Request{
 			Method:     "GET",
 			URL:        url,
 			Proto:      "HTTP/1.1",
@@ -242,6 +246,8 @@ func TestBuildEnv(t *testing.T) {
 				"Foo": {"Bar", "two"},
 			},
 		}
+		ctx := context.WithValue(r.Context(), httpserver.OriginalURLCtxKey, *r.URL)
+		return r.WithContext(ctx)
 	}
 
 	fpath := "/fgci_test.php"
@@ -251,7 +257,7 @@ func TestBuildEnv(t *testing.T) {
 			"REMOTE_ADDR":     "2b02:1810:4f2d:9400:70ab:f822:be8a:9093",
 			"REMOTE_PORT":     "51688",
 			"SERVER_PROTOCOL": "HTTP/1.1",
-			"QUERY_STRING":    "test=blabla",
+			"QUERY_STRING":    "test=foobar",
 			"REQUEST_METHOD":  "GET",
 			"HTTP_HOST":       "localhost:2015",
 		}
@@ -301,63 +307,130 @@ func TestBuildEnv(t *testing.T) {
 	}
 	envExpected = newEnv()
 	envExpected["HTTP_HOST"] = "localhost:2015"
-	envExpected["CUSTOM_URI"] = "custom_uri/fgci_test.php?test=blabla"
-	envExpected["CUSTOM_QUERY"] = "custom=true&test=blabla"
+	envExpected["CUSTOM_URI"] = "custom_uri/fgci_test.php?test=foobar"
+	envExpected["CUSTOM_QUERY"] = "custom=true&test=foobar"
 	testBuildEnv(r, rule, fpath, envExpected)
-
-	// 6. Test Caddy-Rewrite-Original-URI header is not removed
-	r = newReq()
-	rule.EnvVars = [][2]string{
-		{"HTTP_HOST", "{host}"},
-		{"CUSTOM_URI", "custom_uri{uri}"},
-		{"CUSTOM_QUERY", "custom=true&{query}"},
-	}
-	envExpected = newEnv()
-	envExpected["HTTP_HOST"] = "localhost:2015"
-	envExpected["CUSTOM_URI"] = "custom_uri/fgci_test.php?test=blabla"
-	envExpected["CUSTOM_QUERY"] = "custom=true&test=blabla"
-	httpFieldName := strings.ToUpper(internalRewriteFieldName)
-	envExpected["HTTP_"+httpFieldName] = ""
-	r.Header.Add(internalRewriteFieldName, "/apath/torewrite/index.php")
-	testBuildEnv(r, rule, fpath, envExpected)
-	if r.Header.Get(internalRewriteFieldName) == "" {
-		t.Errorf("Error: Header Expected %v", internalRewriteFieldName)
-	}
-
 }
 
 func TestReadTimeout(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Unable to create listener for test: %v", err)
+	tests := []struct {
+		sleep       time.Duration
+		readTimeout time.Duration
+		shouldErr   bool
+	}{
+		{75 * time.Millisecond, 50 * time.Millisecond, true},
+		{0, -1 * time.Second, true},
+		{0, time.Minute, false},
 	}
-	defer listener.Close()
-	go fcgi.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(time.Second * 1)
-	}))
 
-	network, address := parseAddress(listener.Addr().String())
-	handler := Handler{
-		Next: nil,
-		Rules: []Rule{
-			{
-				Path:        "/",
-				Address:     listener.Addr().String(),
-				dialer:      basicDialer{network: network, address: address},
-				ReadTimeout: time.Millisecond * 100,
+	var wg sync.WaitGroup
+
+	for i, test := range tests {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("Test %d: Unable to create listener for test: %v", i, err)
+		}
+		defer listener.Close()
+
+		network, address := parseAddress(listener.Addr().String())
+		handler := Handler{
+			Next: nil,
+			Rules: []Rule{
+				{
+					Path:        "/",
+					Address:     listener.Addr().String(),
+					dialer:      basicDialer{network: network, address: address},
+					ReadTimeout: test.readTimeout,
+				},
 			},
-		},
-	}
-	r, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatalf("Unable to create request: %v", err)
-	}
-	w := httptest.NewRecorder()
+		}
+		r, err := http.NewRequest("GET", "/", nil)
+		if err != nil {
+			t.Fatalf("Test %d: Unable to create request: %v", i, err)
+		}
+		w := httptest.NewRecorder()
 
-	_, err = handler.ServeHTTP(w, r)
-	if err == nil {
-		t.Error("Expected i/o timeout error but had none")
-	} else if err, ok := err.(net.Error); !ok || !err.Timeout() {
-		t.Errorf("Expected i/o timeout error, got: '%s'", err.Error())
+		wg.Add(1)
+		go fcgi.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(test.sleep)
+			w.WriteHeader(http.StatusOK)
+			wg.Done()
+		}))
+
+		got, err := handler.ServeHTTP(w, r)
+		if test.shouldErr {
+			if err == nil {
+				t.Errorf("Test %d: Expected i/o timeout error but had none", i)
+			} else if err, ok := err.(net.Error); !ok || !err.Timeout() {
+				t.Errorf("Test %d: Expected i/o timeout error, got: '%s'", i, err.Error())
+			}
+
+			want := http.StatusGatewayTimeout
+			if got != want {
+				t.Errorf("Test %d: Expected returned status code to be %d, got: %d",
+					i, want, got)
+			}
+		} else if err != nil {
+			t.Errorf("Test %d: Expected nil error, got: %v", i, err)
+		}
+
+		wg.Wait()
+	}
+}
+
+func TestSendTimeout(t *testing.T) {
+	tests := []struct {
+		sendTimeout time.Duration
+		shouldErr   bool
+	}{
+		{-1 * time.Second, true},
+		{time.Minute, false},
+	}
+
+	for i, test := range tests {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("Test %d: Unable to create listener for test: %v", i, err)
+		}
+		defer listener.Close()
+
+		network, address := parseAddress(listener.Addr().String())
+		handler := Handler{
+			Next: nil,
+			Rules: []Rule{
+				{
+					Path:        "/",
+					Address:     listener.Addr().String(),
+					dialer:      basicDialer{network: network, address: address},
+					SendTimeout: test.sendTimeout,
+				},
+			},
+		}
+		r, err := http.NewRequest("GET", "/", nil)
+		if err != nil {
+			t.Fatalf("Test %d: Unable to create request: %v", i, err)
+		}
+		w := httptest.NewRecorder()
+
+		go fcgi.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		got, err := handler.ServeHTTP(w, r)
+		if test.shouldErr {
+			if err == nil {
+				t.Errorf("Test %d: Expected i/o timeout error but had none", i)
+			} else if err, ok := err.(net.Error); !ok || !err.Timeout() {
+				t.Errorf("Test %d: Expected i/o timeout error, got: '%s'", i, err.Error())
+			}
+
+			want := http.StatusGatewayTimeout
+			if got != want {
+				t.Errorf("Test %d: Expected returned status code to be %d, got: %d",
+					i, want, got)
+			}
+		} else if err != nil {
+			t.Errorf("Test %d: Expected nil error, got: %v", i, err)
+		}
 	}
 }

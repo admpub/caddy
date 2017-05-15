@@ -6,6 +6,8 @@ import (
 	"os"
 	"path"
 	"time"
+
+	"github.com/mholt/caddy"
 )
 
 func init() {
@@ -17,6 +19,10 @@ type (
 	// idea of middleware: it chains one Handler to the next by being
 	// passed the next Handler in the chain.
 	Middleware func(Handler) Handler
+
+	// ListenerMiddleware is similar to the Middleware type, except it
+	// chains one net.Listener to the next.
+	ListenerMiddleware func(caddy.Listener) caddy.Listener
 
 	// Handler is like http.Handler except ServeHTTP may return a status
 	// code and/or error.
@@ -191,3 +197,12 @@ var EmptyNext = HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, e
 func SameNext(next1, next2 Handler) bool {
 	return fmt.Sprintf("%v", next1) == fmt.Sprintf("%v", next2)
 }
+
+// Context key constants.
+const (
+	// RemoteUserCtxKey is the key for the remote user of the request, if any (basicauth).
+	RemoteUserCtxKey caddy.CtxKey = "remote_user"
+
+	// MitmCtxKey is the key for the result of MITM detection
+	MitmCtxKey caddy.CtxKey = "mitm"
+)
