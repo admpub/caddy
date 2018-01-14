@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package staticfiles
 
 import (
@@ -22,8 +36,9 @@ func TestServeHTTP(t *testing.T) {
 	defer afterServeHTTPTest(t, tmpWebRootDir)
 
 	fileserver := FileServer{
-		Root: http.Dir(filepath.Join(tmpWebRootDir, webrootName)),
-		Hide: []string{"dir/hidden.html"},
+		Root:       http.Dir(filepath.Join(tmpWebRootDir, webrootName)),
+		Hide:       []string{"dir/hidden.html"},
+		IndexPages: DefaultIndexPages,
 	}
 
 	movedPermanently := "Moved Permanently"
@@ -219,6 +234,13 @@ func TestServeHTTP(t *testing.T) {
 			expectedLocation:    "https://foo/bar/file1.html",
 			expectedBodyContent: movedPermanently,
 		},
+		{
+			url:                   "https://foo/notindex.html",
+			expectedStatus:        http.StatusOK,
+			expectedBodyContent:   testFiles[webrootNotIndexHTML],
+			expectedEtag:          `"2n9cm"`,
+			expectedContentLength: strconv.Itoa(len(testFiles[webrootNotIndexHTML])),
+		},
 	}
 
 	for i, test := range tests {
@@ -230,8 +252,10 @@ func TestServeHTTP(t *testing.T) {
 			continue
 		}
 
-		// set the original URL on the context
+		// set the original URL and path prefix on the context
 		ctx := context.WithValue(request.Context(), caddy.CtxKey("original_url"), *request.URL)
+		request = request.WithContext(ctx)
+		ctx = context.WithValue(request.Context(), caddy.CtxKey("path_prefix"), test.stripPathPrefix)
 		request = request.WithContext(ctx)
 
 		request.Header.Add("Accept-Encoding", test.acceptEncoding)
@@ -491,6 +515,7 @@ func TestServeHTTPFailingStat(t *testing.T) {
 // Paths for the fake site used temporarily during testing.
 var (
 	webrootFile1HTML                   = filepath.Join(webrootName, "file1.html")
+	webrootNotIndexHTML                = filepath.Join(webrootName, "notindex.html")
 	webrootDirFile2HTML                = filepath.Join(webrootName, "dir", "file2.html")
 	webrootDirHiddenHTML               = filepath.Join(webrootName, "dir", "hidden.html")
 	webrootDirwithindexIndeHTML        = filepath.Join(webrootName, "dirwithindex", "index.html")
@@ -517,6 +542,7 @@ var (
 var testFiles = map[string]string{
 	"unreachable.html":                 "<h1>must not leak</h1>",
 	webrootFile1HTML:                   "<h1>file1.html</h1>",
+	webrootNotIndexHTML:                "<h1>notindex.html</h1>",
 	webrootDirFile2HTML:                "<h1>dir/file2.html</h1>",
 	webrootDirwithindexIndeHTML:        "<h1>dirwithindex/index.html</h1>",
 	webrootDirHiddenHTML:               "<h1>dir/hidden.html</h1>",

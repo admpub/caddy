@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package staticfiles provides middleware for serving static files from disk.
 // Its handler is the default HTTP handler for the HTTP server.
 //
@@ -7,7 +21,6 @@ package staticfiles
 import (
 	"math/rand"
 	"net/http"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -32,6 +45,10 @@ import (
 type FileServer struct {
 	Root http.FileSystem // jailed access to the file system
 	Hide []string        // list of files for which to respond with "Not Found"
+
+	// A list of pages that may be understood as the "index" files to directories.
+	// Injected from *SiteConfig.
+	IndexPages []string
 }
 
 // ServeHTTP serves static files for r according to fs's configuration.
@@ -53,9 +70,6 @@ func (fs FileServer) serveFile(w http.ResponseWriter, r *http.Request) (int, err
 	// open the requested file
 	f, err := fs.Root.Open(reqPath)
 	if err != nil {
-		// TODO: remove when http.Dir handles this (Go 1.9?)
-		// Go issue #18984
-		err = mapFSRootOpenErr(err)
 		if os.IsNotExist(err) {
 			return http.StatusNotFound, nil
 		} else if os.IsPermission(err) {
@@ -82,44 +96,49 @@ func (fs FileServer) serveFile(w http.ResponseWriter, r *http.Request) (int, err
 
 	// redirect to canonical path (being careful to preserve other parts of URL and
 	// considering cases where a site is defined with a path prefix that gets stripped)
-	u := r.Context().Value(caddy.CtxKey("original_url")).(url.URL)
-	if u.Path == "" {
-		u.Path = "/"
+	urlCopy := *r.URL
+	pathPrefix, _ := r.Context().Value(caddy.CtxKey("path_prefix")).(string)
+	if pathPrefix != "/" {
+		urlCopy.Path = pathPrefix + urlCopy.Path
+	}
+	if urlCopy.Path == "" {
+		urlCopy.Path = "/"
 	}
 	if d.IsDir() {
 		// ensure there is a trailing slash
-		if u.Path[len(u.Path)-1] != '/' {
-			u.Path += "/"
-			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+		if urlCopy.Path[len(urlCopy.Path)-1] != '/' {
+			urlCopy.Path += "/"
+			http.Redirect(w, r, urlCopy.String(), http.StatusMovedPermanently)
 			return http.StatusMovedPermanently, nil
 		}
 	} else {
 		// ensure no trailing slash
 		redir := false
-		if u.Path[len(u.Path)-1] == '/' {
-			u.Path = u.Path[:len(u.Path)-1]
+		if urlCopy.Path[len(urlCopy.Path)-1] == '/' {
+			urlCopy.Path = urlCopy.Path[:len(urlCopy.Path)-1]
 			redir = true
 		}
 
 		// if an index file was explicitly requested, strip file name from the request
 		// ("/foo/index.html" -> "/foo/")
-		for _, indexPage := range IndexPages {
-			if strings.HasSuffix(u.Path, indexPage) {
-				u.Path = u.Path[:len(u.Path)-len(indexPage)]
+		var requestPage = path.Base(urlCopy.Path)
+		for _, indexPage := range fs.IndexPages {
+			if requestPage == indexPage {
+				urlCopy.Path = urlCopy.Path[:len(urlCopy.Path)-len(indexPage)]
 				redir = true
 				break
 			}
 		}
 
 		if redir {
-			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+			http.Redirect(w, r, urlCopy.String(), http.StatusMovedPermanently)
 			return http.StatusMovedPermanently, nil
 		}
 	}
 
 	// use contents of an index file, if present, for directory requests
 	if d.IsDir() {
-		for _, indexPage := range IndexPages {
+		for _, indexPage := range fs.IndexPages {
 			indexPath := path.Join(reqPath, indexPage)
 			indexFile, err := fs.Root.Open(indexPath)
 			if err != nil {
@@ -238,9 +257,9 @@ func calculateEtag(d os.FileInfo) string {
 	return `"` + t + s + `"`
 }
 
-// IndexPages is a list of pages that may be understood as
+// DefaultIndexPages is a list of pages that may be understood as
 // the "index" files to directories.
-var IndexPages = []string{
+var DefaultIndexPages = []string{
 	"index.html",
 	"index.htm",
 	"index.txt",
@@ -261,36 +280,4 @@ var staticEncoding = map[string]string{
 var staticEncodingPriority = []string{
 	"br",
 	"gzip",
-}
-
-// mapFSRootOpenErr maps the provided non-nil error
-// to a possibly better non-nil error. In particular, it turns OS-specific errors
-// about opening files in non-directories into os.ErrNotExist.
-//
-// TODO: remove when http.Dir handles this (slated for Go 1.9)
-// Go issue #18984
-func mapFSRootOpenErr(originalErr error) error {
-	if os.IsNotExist(originalErr) || os.IsPermission(originalErr) {
-		return originalErr
-	}
-
-	perr, ok := originalErr.(*os.PathError)
-	if !ok {
-		return originalErr
-	}
-	name := perr.Path
-	parts := strings.Split(name, string(filepath.Separator))
-	for i := range parts {
-		if parts[i] == "" {
-			continue
-		}
-		fi, err := os.Stat(strings.Join(parts[:i+1], string(filepath.Separator)))
-		if err != nil {
-			return originalErr
-		}
-		if !fi.IsDir() {
-			return os.ErrNotExist
-		}
-	}
-	return originalErr
 }

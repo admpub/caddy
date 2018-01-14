@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package caddy implements the Caddy server manager.
 //
 // To use this package:
@@ -17,6 +31,7 @@ package caddy
 
 import (
 	"bytes"
+	"encoding/gob"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -51,7 +66,7 @@ var (
 	// isUpgrade will be set to true if this process
 	// was started as part of an upgrade, where a parent
 	// Caddy process started this one.
-	isUpgrade bool
+	isUpgrade = os.Getenv("CADDY__UPGRADE") == "1"
 
 	// started will be set to true when the first
 	// instance is started; it never gets set to
@@ -191,12 +206,18 @@ func (i *Instance) Restart(newCaddyfile Input) (*Instance, error) {
 
 	// success! stop the old instance
 	for _, shutdownFunc := range i.onShutdown {
-		err := shutdownFunc()
+		err = shutdownFunc()
 		if err != nil {
 			return i, err
 		}
 	}
-	i.Stop()
+	err = i.Stop()
+	if err != nil {
+		return i, err
+	}
+
+	// Execute instantiation events
+	EmitEvent(InstanceStartupEvent, newInst)
 
 	log.Println("[INFO] Reloading complete")
 
@@ -360,6 +381,16 @@ type AfterStartup interface {
 // is returned. Consequently, this function never returns a nil
 // value as long as there are no errors.
 func LoadCaddyfile(serverType string) (Input, error) {
+	// If we are finishing an upgrade, we must obtain the Caddyfile
+	// from our parent process, regardless of configured loaders.
+	if IsUpgrade() {
+		err := gob.NewDecoder(os.Stdin).Decode(&loadedGob)
+		if err != nil {
+			return nil, err
+		}
+		return loadedGob.Caddyfile, nil
+	}
+
 	// Ask plugged-in loaders for a Caddyfile
 	cdyfile, err := loadCaddyfileInput(serverType)
 	if err != nil {
@@ -424,9 +455,16 @@ func (i *Instance) Caddyfile() Input {
 //
 // This function blocks until all the servers are listening.
 func Start(cdyfile Input) (*Instance, error) {
-	writePidFile()
 	inst := &Instance{serverType: cdyfile.ServerType(), wg: new(sync.WaitGroup)}
-	return inst, startWithListenerFds(cdyfile, inst, nil)
+	err := startWithListenerFds(cdyfile, inst, nil)
+	if err != nil {
+		return inst, err
+	}
+	signalSuccessToParent()
+	if pidErr := writePidFile(); pidErr != nil {
+		log.Printf("[ERROR] Could not write pidfile: %v", pidErr)
+	}
+	return inst, nil
 }
 
 func startWithListenerFds(cdyfile Input, inst *Instance, restartFds map[string]restartTriple) error {
@@ -445,16 +483,17 @@ func startWithListenerFds(cdyfile Input, inst *Instance, restartFds map[string]r
 	}
 
 	// run startup callbacks
-	if restartFds == nil {
+	if !IsUpgrade() && restartFds == nil {
+		// first startup means not a restart or upgrade
 		for _, firstStartupFunc := range inst.onFirstStartup {
-			err := firstStartupFunc()
+			err = firstStartupFunc()
 			if err != nil {
 				return err
 			}
 		}
 	}
 	for _, startupFunc := range inst.onStartup {
-		err := startupFunc()
+		err = startupFunc()
 		if err != nil {
 			return err
 		}
@@ -479,6 +518,11 @@ func startWithListenerFds(cdyfile Input, inst *Instance, restartFds map[string]r
 		}
 		if !Quiet {
 			for _, srvln := range inst.servers {
+				// only show FD notice if the listener is not nil.
+				// This can happen when only serving UDP or TCP
+				if srvln.listener == nil {
+					continue
+				}
 				if !IsLoopback(srvln.listener.Addr().String()) {
 					checkFdlimit()
 					break
@@ -500,7 +544,6 @@ func startWithListenerFds(cdyfile Input, inst *Instance, restartFds map[string]r
 // callbacks will not be executed between directives, since the purpose
 // is only to check the input for valid syntax.
 func ValidateAndExecuteDirectives(cdyfile Input, inst *Instance, justValidate bool) error {
-
 	// If parsing only inst will be nil, create an instance for this function call only.
 	if justValidate {
 		inst = &Instance{serverType: cdyfile.ServerType(), wg: new(sync.WaitGroup)}
@@ -530,13 +573,7 @@ func ValidateAndExecuteDirectives(cdyfile Input, inst *Instance, justValidate bo
 		return err
 	}
 
-	err = executeDirectives(inst, cdyfile.Path(), stype.Directives(), sblocks, justValidate)
-	if err != nil {
-		return err
-	}
-
-	return nil
-
+	return executeDirectives(inst, cdyfile.Path(), stype.Directives(), sblocks, justValidate)
 }
 
 func executeDirectives(inst *Instance, filename string,
@@ -616,6 +653,36 @@ func startServers(serverList []Server, inst *Instance, restartFds map[string]res
 			err error
 		)
 
+		// if performing an upgrade, obtain listener file descriptors
+		// from parent process
+		if IsUpgrade() {
+			if gs, ok := s.(GracefulServer); ok {
+				addr := gs.Address()
+				if fdIndex, ok := loadedGob.ListenerFds["tcp"+addr]; ok {
+					file := os.NewFile(fdIndex, "")
+					ln, err = net.FileListener(file)
+					if err != nil {
+						return err
+					}
+					err = file.Close()
+					if err != nil {
+						return err
+					}
+				}
+				if fdIndex, ok := loadedGob.ListenerFds["udp"+addr]; ok {
+					file := os.NewFile(fdIndex, "")
+					pc, err = net.FilePacketConn(file)
+					if err != nil {
+						return err
+					}
+					err = file.Close()
+					if err != nil {
+						return err
+					}
+				}
+			}
+		}
+
 		// If this is a reload and s is a GracefulServer,
 		// reuse the listener for a graceful restart.
 		if gs, ok := s.(GracefulServer); ok && restartFds != nil {
@@ -631,7 +698,10 @@ func startServers(serverList []Server, inst *Instance, restartFds map[string]res
 					if err != nil {
 						return err
 					}
-					file.Close()
+					err = file.Close()
+					if err != nil {
+						return err
+					}
 				}
 				// packetconn
 				if old.packet != nil {
@@ -643,7 +713,10 @@ func startServers(serverList []Server, inst *Instance, restartFds map[string]res
 					if err != nil {
 						return err
 					}
-					file.Close()
+					err = file.Close()
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -793,25 +866,6 @@ func IsInternal(addr string) bool {
 		}
 	}
 	return false
-}
-
-// Upgrade re-launches the process, preserving the listeners
-// for a graceful restart. It does NOT load new configuration;
-// it only starts the process anew with a fresh binary.
-//
-// TODO: This is not yet implemented
-func Upgrade() error {
-	return fmt.Errorf("not implemented")
-	// TODO: have child process set isUpgrade = true
-}
-
-// IsUpgrade returns true if this process is part of an upgrade
-// where a parent caddy process spawned this one to upgrade
-// the binary.
-func IsUpgrade() bool {
-	mu.Lock()
-	defer mu.Unlock()
-	return isUpgrade
 }
 
 // Started returns true if at least one instance has been

@@ -57,7 +57,12 @@ Caddy binaries have no dependencies and are available for every platform. Get Ca
 customize your build in the browser
 - **[Latest release](https://github.com/mholt/caddy/releases/latest)** for
 pre-built, vanilla binaries
-- **go get** to build from source: `go get github.com/mholt/caddy/caddy` (requires Go 1.8 or newer)
+
+## Build
+To build from source you need **[Git](https://git-scm.com/downloads)** and **[Go](https://golang.org/doc/install)** (1.8 or newer). Follow these instruction for fast building:
+
+- Get source `go get github.com/mholt/caddy/caddy` and then run `go get github.com/caddyserver/builds`
+- Now `cd` to `$GOPATH/src/github.com/mholt/caddy/caddy` and run `go run build.go`
 
 Then make sure the `caddy` binary is in your PATH.
 
@@ -123,12 +128,14 @@ The Caddy project does not officially maintain any system-specific integrations 
 
 How you choose to run Caddy is up to you. Many users are satisfied with `nohup caddy &`. Others use `screen`. Users who need Caddy to come back up after reboots either do so in the script that caused the reboot, add a command to an init script, or configure a service with their OS.
 
+If you have questions or concerns about Caddy' underlying crypto implementations, consult Go's [crypto packages](https://golang.org/pkg/crypto), starting with their documentation, then issues, then the code itself; as Caddy uses mainly those libraries.
+
 
 ## Contributing
 
-**[Join our forum](https://caddy.community) where you can chat with other Caddy users and developers!**
+**[Join our forum](https://caddy.community) where you can chat with other Caddy users and developers!** To get familiar with the code base, try [Caddy code search on Sourcegraph](https://sourcegraph.com/github.com/mholt/caddy/-/search)!
 
-Please see our [contributing guidelines](https://github.com/mholt/caddy/blob/master/.github/CONTRIBUTING.md). If you want to write a plugin, check out the [developer wiki](https://github.com/mholt/caddy/wiki).
+Please see our [contributing guidelines](https://github.com/mholt/caddy/blob/master/.github/CONTRIBUTING.md) for instructions. If you want to write a plugin, check out the [developer wiki](https://github.com/mholt/caddy/wiki).
 
 We use GitHub issues and pull requests only for discussing bug reports and the development of specific changes. We welcome all other topics on the [forum](https://caddy.community)!
 

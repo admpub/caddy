@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // This file is adapted from code in the net/http/httputil
 // package of the Go standard library, which is by the
 // Go Authors, and bears this copyright and license info:
@@ -12,7 +26,9 @@
 package proxy
 
 import (
+	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -23,6 +39,8 @@ import (
 
 	"golang.org/x/net/http2"
 
+	"github.com/lucas-clemente/quic-go"
+	"github.com/lucas-clemente/quic-go/h2quic"
 	"github.com/mholt/caddy/caddyhttp/httpserver"
 )
 
@@ -33,6 +51,8 @@ var (
 	}
 
 	bufferPool = sync.Pool{New: createBuffer}
+
+	defaultCryptoHandshakeTimeout = 10 * time.Second
 )
 
 func createBuffer() interface{} {
@@ -73,6 +93,8 @@ type ReverseProxy struct {
 	// response body.
 	// If zero, no periodic flushing is done.
 	FlushInterval time.Duration
+
+	srvResolver srvResolver
 }
 
 // Though the relevant directive prefix is just "unix:", url.Parse
@@ -84,6 +106,23 @@ type ReverseProxy struct {
 func socketDial(hostName string) func(network, addr string) (conn net.Conn, err error) {
 	return func(network, addr string) (conn net.Conn, err error) {
 		return net.Dial("unix", hostName[len("unix://"):])
+	}
+}
+
+func (rp *ReverseProxy) srvDialerFunc(locator string) func(network, addr string) (conn net.Conn, err error) {
+	service := locator
+	if strings.HasPrefix(locator, "srv://") {
+		service = locator[6:]
+	} else if strings.HasPrefix(locator, "srv+https://") {
+		service = locator[12:]
+	}
+
+	return func(network, addr string) (conn net.Conn, err error) {
+		_, addrs, err := rp.srvResolver.LookupSRV(context.Background(), "", "", service)
+		if err != nil {
+			return nil, err
+		}
+		return net.Dial("tcp", fmt.Sprintf("%s:%d", addrs[0].Target, addrs[0].Port))
 	}
 }
 
@@ -113,6 +152,12 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int) *
 			// scheme and host have to be faked
 			req.URL.Scheme = "http"
 			req.URL.Host = "socket"
+		} else if target.Scheme == "srv" {
+			req.URL.Scheme = "http"
+			req.URL.Host = target.Host
+		} else if target.Scheme == "srv+https" {
+			req.URL.Scheme = "https"
+			req.URL.Host = target.Host
 		} else {
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
@@ -180,19 +225,33 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int) *
 			req.URL.RawQuery = targetQuery + "&" + req.URL.RawQuery
 		}
 	}
-	rp := &ReverseProxy{Director: director, FlushInterval: 250 * time.Millisecond} // flushing good for streaming & server-sent events
+
+	rp := &ReverseProxy{
+		Director:      director,
+		FlushInterval: 250 * time.Millisecond, // flushing good for streaming & server-sent events
+		srvResolver:   net.DefaultResolver,
+	}
+
 	if target.Scheme == "unix" {
 		rp.Transport = &http.Transport{
 			Dial: socketDial(target.String()),
 		}
-	} else if keepalive != http.DefaultMaxIdleConnsPerHost {
-		// if keepalive is equal to the default,
-		// just use default transport, to avoid creating
-		// a brand new transport
+	} else if target.Scheme == "quic" {
+		rp.Transport = &h2quic.RoundTripper{
+			QuicConfig: &quic.Config{
+				HandshakeTimeout: defaultCryptoHandshakeTimeout,
+			},
+		}
+	} else if keepalive != http.DefaultMaxIdleConnsPerHost || strings.HasPrefix(target.Scheme, "srv") {
+		dialFunc := defaultDialer.Dial
+		if strings.HasPrefix(target.Scheme, "srv") {
+			dialFunc = rp.srvDialerFunc(target.String())
+		}
+
 		transport := &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
-			Dial:                  defaultDialer.Dial,
-			TLSHandshakeTimeout:   10 * time.Second,
+			Dial:                  dialFunc,
+			TLSHandshakeTimeout:   defaultCryptoHandshakeTimeout,
 			ExpectContinueTimeout: 1 * time.Second,
 		}
 		if keepalive == 0 {
@@ -216,7 +275,7 @@ func (rp *ReverseProxy) UseInsecureTransport() {
 		transport := &http.Transport{
 			Proxy:               http.ProxyFromEnvironment,
 			Dial:                defaultDialer.Dial,
-			TLSHandshakeTimeout: 10 * time.Second,
+			TLSHandshakeTimeout: defaultCryptoHandshakeTimeout,
 			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 		}
 		if httpserver.HTTP2 {
@@ -231,6 +290,11 @@ func (rp *ReverseProxy) UseInsecureTransport() {
 		// No http2.ConfigureTransport() here.
 		// For now this is only added in places where
 		// an http.Transport is actually created.
+	} else if transport, ok := rp.Transport.(*h2quic.RoundTripper); ok {
+		if transport.TLSClientConfig == nil {
+			transport.TLSClientConfig = &tls.Config{}
+		}
+		transport.TLSClientConfig.InsecureSkipVerify = true
 	}
 }
 
@@ -245,6 +309,10 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 	}
 
 	rp.Director(outreq)
+
+	if outreq.URL.Scheme == "quic" {
+		outreq.URL.Scheme = "https" // Change scheme back to https for QUIC RoundTripper
+	}
 
 	res, err := transport.RoundTrip(outreq)
 	if err != nil {
@@ -272,7 +340,7 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 	}
 
 	if isWebsocket {
-		res.Body.Close()
+		defer res.Body.Close()
 		hj, ok := rw.(http.Hijacker)
 		if !ok {
 			panic(httpserver.NonHijackerError{Underlying: rw})
@@ -300,8 +368,13 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 		}
 		defer backendConn.Close()
 
+		proxyDone := make(chan struct{}, 2)
+
 		// Proxy backend -> frontend.
-		go pooledIoCopy(conn, backendConn)
+		go func() {
+			pooledIoCopy(conn, backendConn)
+			proxyDone <- struct{}{}
+		}()
 
 		// Proxy frontend -> backend.
 		//
@@ -316,7 +389,13 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 				backendConn.Write(rbuf)
 			}
 		}
-		pooledIoCopy(backendConn, conn)
+		go func() {
+			pooledIoCopy(backendConn, conn)
+			proxyDone <- struct{}{}
+		}()
+
+		// If one side is done, we are done.
+		<-proxyDone
 	} else {
 		// NOTE:
 		//   Closing the Body involves acquiring a mutex, which is a
@@ -413,8 +492,12 @@ func copyHeader(dst, src http.Header) {
 			if _, shouldSkip := skipHeaders[k]; shouldSkip {
 				continue
 			}
-			// otherwise, overwrite
-			dst.Del(k)
+			// otherwise, overwrite to avoid duplicated fields that can be
+			// problematic (see issue #1086) -- however, allow duplicate
+			// Server fields so we can see the reality of the proxying.
+			if k != "Server" {
+				dst.Del(k)
+			}
 		}
 		for _, v := range vv {
 			dst.Add(k, v)

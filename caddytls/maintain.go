@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package caddytls
 
 import (
@@ -24,6 +38,13 @@ const (
 
 	// RenewDurationBefore is how long before expiration to renew certificates.
 	RenewDurationBefore = (24 * time.Hour) * 30
+
+	// RenewDurationBeforeAtStartup is how long before expiration to require
+	// a renewed certificate when the process is first starting up (see #1680).
+	// A wider window between RenewDurationBefore and this value will allow
+	// Caddy to start under duress but hopefully this duration will give it
+	// enough time for the blockage to be relieved.
+	RenewDurationBeforeAtStartup = (24 * time.Hour) * 7
 
 	// OCSPInterval is how often to check if OCSP stapling needs updating.
 	OCSPInterval = 1 * time.Hour
@@ -63,7 +84,8 @@ func maintainAssets(stopChan chan struct{}) {
 	}
 }
 
-// RenewManagedCertificates renews managed certificates.
+// RenewManagedCertificates renews managed certificates,
+// including ones loaded on-demand.
 func RenewManagedCertificates(allowPrompts bool) (err error) {
 	var renewQueue, deleteQueue []Certificate
 	visitedNames := make(map[string]struct{})
@@ -126,31 +148,41 @@ func RenewManagedCertificates(allowPrompts bool) (err error) {
 		err := cert.Config.RenewCert(renewName, allowPrompts)
 		if err != nil {
 			if allowPrompts {
-				// Certificate renewal failed and the operator is present; we should stop
-				// immediately and return the error. See a discussion in issue 642
-				// about this. For a while, we only stopped if the certificate was
-				// expired, but in reality, there is no difference between reporting
-				// it now versus later, except that there's somebody present to deal
-				// with it now, so require it.
-				return err
+				// Certificate renewal failed and the operator is present. See a discussion
+				// about this in issue 642. For a while, we only stopped if the certificate
+				// was expired, but in reality, there is no difference between reporting
+				// it now versus later, except that there's somebody present to deal with
+				// it right now.
+				timeLeft := cert.NotAfter.Sub(time.Now().UTC())
+				if timeLeft < RenewDurationBeforeAtStartup {
+					// See issue 1680. Only fail at startup if the certificate is dangerously
+					// close to expiration.
+					return err
+				}
 			}
 			log.Printf("[ERROR] %v", err)
 			if cert.Config.OnDemand {
+				// loaded dynamically, removed dynamically
 				deleteQueue = append(deleteQueue, cert)
 			}
 		} else {
 			// successful renewal, so update in-memory cache by loading
 			// renewed certificate so it will be used with handshakes
-			if cert.Names[len(cert.Names)-1] == "" {
-				// Special case: This is the default certificate. We must
-				// flush it out of the cache so that we no longer point to
-				// the old, un-renewed certificate. Otherwise it will be
-				// renewed on every scan, which is too often. The next cert
-				// to be cached (probably this one) will become the default.
-				certCacheMu.Lock()
-				delete(certCache, "")
-				certCacheMu.Unlock()
+
+			// we must delete all the names this cert services from the cache
+			// so that we can replace the certificate, because replacing names
+			// already in the cache is not allowed, to avoid later conflicts
+			// with renewals.
+			// TODO: It would be nice if this whole operation were idempotent;
+			// i.e. a thread-safe function to replace a certificate in the cache,
+			// see also handshake.go for on-demand maintenance.
+			certCacheMu.Lock()
+			for _, name := range cert.Names {
+				delete(certCache, name)
 			}
+			certCacheMu.Unlock()
+
+			// put the certificate in the cache
 			_, err := cert.Config.CacheManagedCertificate(cert.Names[0])
 			if err != nil {
 				if allowPrompts {
@@ -235,6 +267,16 @@ func UpdateOCSPStaples() {
 			log.Printf("[INFO] Advancing OCSP staple for %v from %s to %s",
 				cert.Names, lastNextUpdate, cert.OCSP.NextUpdate)
 			for _, n := range cert.Names {
+				// BUG: If this certificate has names on it that appear on another
+				// certificate in the cache, AND the other certificate is keyed by
+				// that name in the cache, then this method of 'queueing' the staple
+				// update will cause this certificate's new OCSP to be stapled to
+				// a different certificate! See:
+				// https://caddy.community/t/random-ocsp-response-errors-for-random-clients/2473?u=matt
+				// This problem should be avoided if names on certificates in the
+				// cache don't overlap with regards to the cache keys.
+				// (This is isn't a bug anymore, since we're careful when we add
+				// certificates to the cache by skipping keying when key already exists.)
 				updated[n] = ocspUpdate{rawBytes: cert.Certificate.OCSPStaple, parsed: cert.OCSP}
 			}
 		}
@@ -292,8 +334,15 @@ func DeleteOldStapleFiles() {
 // meaning that it is not expedient to get an
 // updated response from the OCSP server.
 func freshOCSP(resp *ocsp.Response) bool {
+	nextUpdate := resp.NextUpdate
+	// If there is an OCSP responder certificate, and it expires before the
+	// OCSP response, use its expiration date as the end of the OCSP
+	// response's validity period.
+	if resp.Certificate != nil && resp.Certificate.NotAfter.Before(nextUpdate) {
+		nextUpdate = resp.Certificate.NotAfter
+	}
 	// start checking OCSP staple about halfway through validity period for good measure
-	refreshTime := resp.ThisUpdate.Add(resp.NextUpdate.Sub(resp.ThisUpdate) / 2)
+	refreshTime := resp.ThisUpdate.Add(nextUpdate.Sub(resp.ThisUpdate) / 2)
 	return time.Now().Before(refreshTime)
 }
 

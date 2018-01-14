@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package caddytls
 
 import (
@@ -25,6 +39,7 @@ type ACMEClient struct {
 	AllowPrompts bool
 	config       *Config
 	acmeClient   *acme.Client
+	locker       Locker
 }
 
 // newACMEClient creates a new ACMEClient given an email and whether
@@ -106,6 +121,10 @@ var newACMEClient = func(config *Config, allowPrompts bool) (*ACMEClient, error)
 		AllowPrompts: allowPrompts,
 		config:       config,
 		acmeClient:   client,
+		locker: &syncLock{
+			nameLocks:   make(map[string]*sync.WaitGroup),
+			nameLocksMu: sync.Mutex{},
+		},
 	}
 
 	if config.DNSProvider == "" {
@@ -196,7 +215,7 @@ func (c *ACMEClient) Obtain(name string) error {
 		return err
 	}
 
-	waiter, err := storage.TryLock(name)
+	waiter, err := c.locker.TryLock(name)
 	if err != nil {
 		return err
 	}
@@ -206,7 +225,7 @@ func (c *ACMEClient) Obtain(name string) error {
 		return nil // we assume the process with the lock succeeded, rather than hammering this execution path again
 	}
 	defer func() {
-		if err := storage.Unlock(name); err != nil {
+		if err := c.locker.Unlock(name); err != nil {
 			log.Printf("[ERROR] Unable to unlock obtain call for %s: %v", name, err)
 		}
 	}()
@@ -272,7 +291,7 @@ func (c *ACMEClient) Renew(name string) error {
 		return err
 	}
 
-	waiter, err := storage.TryLock(name)
+	waiter, err := c.locker.TryLock(name)
 	if err != nil {
 		return err
 	}
@@ -282,7 +301,7 @@ func (c *ACMEClient) Renew(name string) error {
 		return nil // we assume the process with the lock succeeded, rather than hammering this execution path again
 	}
 	defer func() {
-		if err := storage.Unlock(name); err != nil {
+		if err := c.locker.Unlock(name); err != nil {
 			log.Printf("[ERROR] Unable to unlock renew call for %s: %v", name, err)
 		}
 	}()
@@ -330,6 +349,9 @@ func (c *ACMEClient) Renew(name string) error {
 	if !success {
 		return errors.New("too many renewal attempts; last error: " + err.Error())
 	}
+
+	// Executes Cert renew events
+	caddy.EmitEvent(caddy.CertRenewEvent, name)
 
 	return saveCertResource(storage, newCertMeta)
 }

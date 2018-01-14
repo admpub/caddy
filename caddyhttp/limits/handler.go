@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package limits
 
 import (
@@ -31,7 +45,7 @@ func (l Limit) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
 
 // MaxBytesReader and its associated methods are borrowed from the
 // Go Standard library (comments intact). The only difference is that
-// it returns a MaxBytesExceeded error instead of a generic error message
+// it returns a ErrMaxBytesExceeded error instead of a generic error message
 // when the request body has exceeded the requested limit
 func MaxBytesReader(w http.ResponseWriter, r io.ReadCloser, n int64) io.ReadCloser {
 	return &maxBytesReader{w: w, r: r, n: n}
@@ -81,7 +95,7 @@ func (l *maxBytesReader) Read(p []byte) (n int, err error) {
 	if res, ok := l.w.(requestTooLarger); ok {
 		res.requestTooLarge()
 	}
-	l.err = httpserver.MaxBytesExceededErr
+	l.err = httpserver.ErrMaxBytesExceeded
 	return n, l.err
 }
 

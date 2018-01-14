@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package httpserver
 
 import (
@@ -88,20 +102,30 @@ func (lw *limitWriter) String() string {
 // emptyValue should be the string that is used in place
 // of empty string (can still be empty string).
 func NewReplacer(r *http.Request, rr *ResponseRecorder, emptyValue string) Replacer {
-	rb := newLimitWriter(MaxLogBodySize)
-	if r.Body != nil {
-		r.Body = struct {
-			io.Reader
-			io.Closer
-		}{io.TeeReader(r.Body, rb), io.Closer(r.Body)}
+	repl := &replacer{
+		request:          r,
+		responseRecorder: rr,
+		emptyValue:       emptyValue,
 	}
-	return &replacer{
-		request:            r,
-		requestBody:        rb,
-		responseRecorder:   rr,
-		customReplacements: make(map[string]string),
-		emptyValue:         emptyValue,
+
+	// extract customReplacements from a request replacer when present.
+	if existing, ok := r.Context().Value(ReplacerCtxKey).(*replacer); ok {
+		repl.requestBody = existing.requestBody
+		repl.customReplacements = existing.customReplacements
+	} else {
+		// if there is no existing replacer, build one from scratch.
+		rb := newLimitWriter(MaxLogBodySize)
+		if r.Body != nil {
+			r.Body = struct {
+				io.Reader
+				io.Closer
+			}{io.TeeReader(r.Body, rb), io.Closer(r.Body)}
+		}
+		repl.requestBody = rb
+		repl.customReplacements = make(map[string]string)
 	}
+
+	return repl
 }
 
 func canLogRequest(r *http.Request) bool {
@@ -243,6 +267,9 @@ func (r *replacer) getSubstitution(key string) string {
 	case "{path_escaped}":
 		u, _ := r.request.Context().Value(OriginalURLCtxKey).(url.URL)
 		return url.QueryEscape(u.Path)
+	case "{request_id}":
+		reqid, _ := r.request.Context().Value(RequestIDCtxKey).(string)
+		return reqid
 	case "{rewrite_path}":
 		return r.request.URL.Path
 	case "{rewrite_path_escaped}":
@@ -284,6 +311,8 @@ func (r *replacer) getSubstitution(key string) string {
 		return now().Format(timeFormat)
 	case "{when_iso}":
 		return now().UTC().Format(timeFormatISOUTC)
+	case "{when_unix}":
+		return strconv.FormatInt(now().Unix(), 10)
 	case "{file}":
 		_, file := path.Split(r.request.URL.Path)
 		return file
@@ -302,7 +331,7 @@ func (r *replacer) getSubstitution(key string) string {
 		}
 		_, err := ioutil.ReadAll(r.request.Body)
 		if err != nil {
-			if err == MaxBytesExceededErr {
+			if err == ErrMaxBytesExceeded {
 				return r.emptyValue
 			}
 		}
@@ -312,7 +341,6 @@ func (r *replacer) getSubstitution(key string) string {
 			if val {
 				return "likely"
 			}
-
 			return "unlikely"
 		}
 		return "unknown"

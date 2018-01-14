@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package caddytls
 
 import (
@@ -21,6 +35,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ocsp"
@@ -136,6 +151,13 @@ func stapleOCSP(cert *Certificate, pemBundle []byte) error {
 	// the certificate. If the OCSP response was not loaded from
 	// storage, we persist it for next time.
 	if ocspResp.Status == ocsp.Good {
+		if ocspResp.NextUpdate.After(cert.NotAfter) {
+			// uh oh, this OCSP response expires AFTER the certificate does, that's kinda bogus.
+			// it was the reason a lot of Symantec-validated sites (not Caddy) went down
+			// in October 2017. https://twitter.com/mattiasgeniar/status/919432824708648961
+			return fmt.Errorf("invalid: OCSP response for %v valid after certificate expiration (%s)",
+				cert.Names, cert.NotAfter.Sub(ocspResp.NextUpdate))
+		}
 		cert.Certificate.OCSPStaple = ocspBytes
 		cert.OCSP = ocspResp
 		if gotNewOCSP {
@@ -243,8 +265,9 @@ func RotateSessionTicketKeys(cfg *tls.Config) chan struct{} {
 
 // Functions that may be swapped out for testing
 var (
-	runTLSTicketKeyRotation      = standaloneTLSTicketKeyRotation
-	setSessionTicketKeysTestHook = func(keys [][32]byte) [][32]byte { return keys }
+	runTLSTicketKeyRotation        = standaloneTLSTicketKeyRotation
+	setSessionTicketKeysTestHook   = func(keys [][32]byte) [][32]byte { return keys }
+	setSessionTicketKeysTestHookMu sync.Mutex
 )
 
 // standaloneTLSTicketKeyRotation governs over the array of TLS ticket keys used to de/crypt TLS tickets.
@@ -271,7 +294,10 @@ func standaloneTLSTicketKeyRotation(c *tls.Config, ticker *time.Ticker, exitChan
 		c.SessionTicketsDisabled = true // bail if we don't have the entropy for the first one
 		return
 	}
-	c.SetSessionTicketKeys(setSessionTicketKeysTestHook(keys))
+	setSessionTicketKeysTestHookMu.Lock()
+	setSessionTicketKeysHook := setSessionTicketKeysTestHook
+	setSessionTicketKeysTestHookMu.Unlock()
+	c.SetSessionTicketKeys(setSessionTicketKeysHook(keys))
 
 	for {
 		select {
@@ -298,7 +324,7 @@ func standaloneTLSTicketKeyRotation(c *tls.Config, ticker *time.Ticker, exitChan
 				keys[0] = newTicketKey
 			}
 			// pushes the last key out, doesn't matter that we don't have a new one
-			c.SetSessionTicketKeys(setSessionTicketKeysTestHook(keys))
+			c.SetSessionTicketKeys(setSessionTicketKeysHook(keys))
 		}
 	}
 }

@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package caddytls
 
 import (
@@ -5,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -121,8 +137,8 @@ func (cfg *Config) getCertDuringHandshake(name string, loadIfNecessary, obtainIf
 
 			name = strings.ToLower(name)
 
-			// Make sure aren't over any applicable limits
-			err := cfg.checkLimitsForObtainingNewCerts(name)
+			// Make sure the certificate should be obtained based on config
+			err := cfg.checkIfCertShouldBeObtained(name)
 			if err != nil {
 				return Certificate{}, err
 			}
@@ -145,10 +161,52 @@ func (cfg *Config) getCertDuringHandshake(name string, loadIfNecessary, obtainIf
 	return Certificate{}, fmt.Errorf("no certificate available for %s", name)
 }
 
+// checkIfCertShouldBeObtained checks to see if an on-demand tls certificate
+// should be obtained for a given domain based upon the config settings.  If
+// a non-nil error is returned, do not issue a new certificate for name.
+func (cfg *Config) checkIfCertShouldBeObtained(name string) error {
+	// If the "ask" URL is defined in the config, use to determine if a
+	// cert should obtained
+	if cfg.OnDemandState.AskURL != nil {
+		return cfg.checkURLForObtainingNewCerts(name)
+	}
+
+	// Otherwise use the limit defined by the "max_certs" setting
+	return cfg.checkLimitsForObtainingNewCerts(name)
+}
+
+func (cfg *Config) checkURLForObtainingNewCerts(name string) error {
+	client := http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return errors.New("following http redirects is not allowed")
+		},
+	}
+
+	// Copy the URL from the config in order to modify it for this request
+	askURL := new(url.URL)
+	*askURL = *cfg.OnDemandState.AskURL
+
+	query := askURL.Query()
+	query.Set("domain", name)
+	askURL.RawQuery = query.Encode()
+
+	resp, err := client.Get(askURL.String())
+	if err != nil {
+		return fmt.Errorf("error checking %v to deterine if certificate for hostname '%s' should be allowed: %v", cfg.OnDemandState.AskURL, name, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("certificate for hostname '%s' not allowed, non-2xx status code %d returned from %v", name, resp.StatusCode, cfg.OnDemandState.AskURL)
+	}
+
+	return nil
+}
+
 // checkLimitsForObtainingNewCerts checks to see if name can be issued right
-// now according to mitigating factors we keep track of and preferences the
-// user has set. If a non-nil error is returned, do not issue a new certificate
-// for name.
+// now according the maximum count defined in the configuration. If a non-nil
+// error is returned, do not issue a new certificate for name.
 func (cfg *Config) checkLimitsForObtainingNewCerts(name string) error {
 	// User can set hard limit for number of certs for the process to issue
 	if cfg.OnDemandState.MaxObtain > 0 &&
@@ -246,7 +304,7 @@ func (cfg *Config) handshakeMaintenance(name string, cert Certificate) (Certific
 	timeLeft := cert.NotAfter.Sub(time.Now().UTC())
 	if timeLeft < RenewDurationBefore {
 		log.Printf("[INFO] Certificate for %v expires in %v; attempting renewal", cert.Names, timeLeft)
-		return cfg.renewDynamicCertificate(name)
+		return cfg.renewDynamicCertificate(name, cert)
 	}
 
 	// Check OCSP staple validity
@@ -269,12 +327,12 @@ func (cfg *Config) handshakeMaintenance(name string, cert Certificate) (Certific
 }
 
 // renewDynamicCertificate renews the certificate for name using cfg. It returns the
-// certificate to use and an error, if any. currentCert may be returned even if an
-// error occurs, since we perform renewals before they expire and it may still be
-// usable. name should already be lower-cased before calling this function.
+// certificate to use and an error, if any. name should already be lower-cased before
+// calling this function. name is the name obtained directly from the handshake's
+// ClientHello.
 //
 // This function is safe for use by multiple concurrent goroutines.
-func (cfg *Config) renewDynamicCertificate(name string) (Certificate, error) {
+func (cfg *Config) renewDynamicCertificate(name string, currentCert Certificate) (Certificate, error) {
 	obtainCertWaitChansMu.Lock()
 	wait, ok := obtainCertWaitChans[name]
 	if ok {
@@ -290,9 +348,31 @@ func (cfg *Config) renewDynamicCertificate(name string) (Certificate, error) {
 	obtainCertWaitChans[name] = wait
 	obtainCertWaitChansMu.Unlock()
 
-	// do the renew
+	// do the renew and reload the certificate
 	log.Printf("[INFO] Renewing certificate for %s", name)
 	err := cfg.RenewCert(name, false)
+	if err == nil {
+		// immediately flush this certificate from the cache so
+		// the name doesn't overlap when we try to replace it,
+		// which would fail, because overlapping existing cert
+		// names isn't allowed
+		certCacheMu.Lock()
+		for _, certName := range currentCert.Names {
+			delete(certCache, certName)
+		}
+		certCacheMu.Unlock()
+
+		// even though the recursive nature of the dynamic cert loading
+		// would just call this function anyway, we do it here to
+		// make the replacement as atomic as possible. (TODO: similar
+		// to the note in maintain.go, it'd be nice if the clearing of
+		// the cache entries above and this load function were truly
+		// atomic...)
+		_, err := currentCert.Config.CacheManagedCertificate(name)
+		if err != nil {
+			log.Printf("[ERROR] loading renewed certificate: %v", err)
+		}
+	}
 
 	// immediately unblock anyone waiting for it; doing this in
 	// a defer would risk deadlock because of the recursive call

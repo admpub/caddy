@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package caddytls
 
 import (
@@ -7,6 +21,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,7 +50,7 @@ func setupTLS(c *caddy.Controller) error {
 	config.Enabled = true
 
 	for c.Next() {
-		var certificateFile, keyFile, loadDir, maxCerts string
+		var certificateFile, keyFile, loadDir, maxCerts, askURL string
 
 		args := c.RemainingArgs()
 		switch len(args) {
@@ -66,6 +81,12 @@ func setupTLS(c *caddy.Controller) error {
 		for c.NextBlock() {
 			hadBlock = true
 			switch c.Val() {
+			case "ca":
+				arg := c.RemainingArgs()
+				if len(arg) != 1 {
+					return c.ArgErr()
+				}
+				config.CAUrl = arg[0]
 			case "key_type":
 				arg := c.RemainingArgs()
 				value, ok := supportedKeyTypes[strings.ToUpper(arg[0])]
@@ -144,6 +165,9 @@ func setupTLS(c *caddy.Controller) error {
 			case "max_certs":
 				c.Args(&maxCerts)
 				config.OnDemand = true
+			case "ask":
+				c.Args(&askURL)
+				config.OnDemand = true
 			case "dns":
 				args := c.RemainingArgs()
 				if len(args) != 1 {
@@ -191,6 +215,19 @@ func setupTLS(c *caddy.Controller) error {
 				return c.Err("max_certs must be a positive integer")
 			}
 			config.OnDemandState.MaxObtain = int32(maxCertsNum)
+		}
+
+		if askURL != "" {
+			parsedURL, err := url.Parse(askURL)
+			if err != nil {
+				return c.Err("ask must be a valid url")
+			}
+
+			if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+				return c.Err("ask URL must use http or https")
+			}
+
+			config.OnDemandState.AskURL = parsedURL
 		}
 
 		// don't try to load certificates unless we're supposed to

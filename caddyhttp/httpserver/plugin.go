@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package httpserver
 
 import (
@@ -13,6 +27,7 @@ import (
 
 	"github.com/mholt/caddy"
 	"github.com/mholt/caddy/caddyfile"
+	"github.com/mholt/caddy/caddyhttp/staticfiles"
 	"github.com/mholt/caddy/caddytls"
 )
 
@@ -141,6 +156,7 @@ func (h *httpContext) InspectServerBlocks(sourceFile string, serverBlocks []cadd
 					AltTLSSNIPort: altTLSSNIPort,
 				},
 				originCaddyfile: sourceFile,
+				IndexPages:      staticfiles.DefaultIndexPages,
 			}
 			h.saveConfig(key, cfg)
 		}
@@ -220,7 +236,7 @@ func GetConfig(c *caddy.Controller) *SiteConfig {
 	// we should only get here during tests because directive
 	// actions typically skip the server blocks where we make
 	// the configs
-	cfg := &SiteConfig{Root: Root, TLS: new(caddytls.Config)}
+	cfg := &SiteConfig{Root: Root, TLS: new(caddytls.Config), IndexPages: staticfiles.DefaultIndexPages}
 	ctx.saveConfig(key, cfg)
 	return cfg
 }
@@ -441,8 +457,10 @@ var directives = []string{
 	"tls",
 
 	// services/utilities, or other directives that don't necessarily inject handlers
-	"startup",
-	"shutdown",
+	"startup",  // TODO: Deprecate this directive
+	"shutdown", // TODO: Deprecate this directive
+	"on",
+	"request_id",
 	"realip", // github.com/captncraig/caddy-realip
 	"git",    // github.com/abiosoft/caddy-git
 
@@ -452,23 +470,28 @@ var directives = []string{
 	// directives that add middleware to the stack
 	"locale", // github.com/simia-tech/caddy-locale
 	"log",
+	"cache", // github.com/nicolasazrak/caddy-cache
 	"rewrite",
 	"ext",
 	"gzip",
 	"header",
 	"errors",
-	"filter",    // github.com/echocat/caddy-filter
-	"minify",    // github.com/hacdias/caddy-minify
-	"ipfilter",  // github.com/pyed/ipfilter
-	"ratelimit", // github.com/xuqingfeng/caddy-rate-limit
-	"search",    // github.com/pedronasser/caddy-search
-	"expires",   // github.com/epicagency/caddy-expires
+	"authz",        // github.com/casbin/caddy-authz
+	"filter",       // github.com/echocat/caddy-filter
+	"minify",       // github.com/hacdias/caddy-minify
+	"ipfilter",     // github.com/pyed/ipfilter
+	"ratelimit",    // github.com/xuqingfeng/caddy-rate-limit
+	"search",       // github.com/pedronasser/caddy-search
+	"expires",      // github.com/epicagency/caddy-expires
+	"forwardproxy", // github.com/caddyserver/forwardproxy
 	"basicauth",
 	"redir",
 	"status",
-	"cors", // github.com/captncraig/cors/caddy
+	"cors",   // github.com/captncraig/cors/caddy
+	"nobots", // github.com/Xumeiquer/nobots
 	"mime",
 	"login",     // github.com/tarent/loginsrv/caddy
+	"reauth",    // github.com/freman/caddy-reauth
 	"jwt",       // github.com/BTBurke/caddy-jwt
 	"jsonp",     // github.com/pschlump/caddy-jsonp
 	"upload",    // blitznote.com/src/caddy.upload
@@ -479,17 +502,23 @@ var directives = []string{
 	"push",
 	"datadog",    // github.com/payintech/caddy-datadog
 	"prometheus", // github.com/miekg/caddy-prometheus
+	"templates",
 	"proxy",
 	"fastcgi",
 	"cgi", // github.com/jung-kurt/caddy-cgi
 	"websocket",
-	"filemanager", // github.com/hacdias/caddy-filemanager
+	"filemanager", // github.com/hacdias/filemanager/caddy/filemanager
+	"webdav",      // github.com/hacdias/caddy-webdav
 	"markdown",
-	"templates",
 	"browse",
-	"hugo",      // github.com/hacdias/caddy-hugo
+	"jekyll",    // github.com/hacdias/filemanager/caddy/jekyll
+	"hugo",      // github.com/hacdias/filemanager/caddy/hugo
 	"mailout",   // github.com/SchumacherFM/mailout
+	"awses",     // github.com/miquella/caddy-awses
 	"awslambda", // github.com/coopernurse/caddy-awslambda
+	"grpc",      // github.com/pieterlouw/caddy-grpc
+	"gopkg",     // github.com/zikes/gopkg
+	"restic",    // github.com/restic/caddy
 }
 
 const (

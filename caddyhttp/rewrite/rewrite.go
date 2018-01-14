@@ -1,3 +1,17 @@
+// Copyright 2015 Light Code Labs, LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Package rewrite is middleware for rewriting requests internally to
 // a different path.
 package rewrite
@@ -84,19 +98,19 @@ type ComplexRule struct {
 	// Request matcher
 	httpserver.RequestMatcher
 
-	*regexp.Regexp
+	Regexp *regexp.Regexp
 }
 
 // NewComplexRule creates a new RegexpRule. It returns an error if regexp
 // pattern (pattern) or extensions (ext) are invalid.
-func NewComplexRule(base, pattern, to string, ext []string, matcher httpserver.RequestMatcher) (*ComplexRule, error) {
+func NewComplexRule(base, pattern, to string, ext []string, matcher httpserver.RequestMatcher) (ComplexRule, error) {
 	// validate regexp if present
 	var r *regexp.Regexp
 	if pattern != "" {
 		var err error
 		r, err = regexp.Compile(pattern)
 		if err != nil {
-			return nil, err
+			return ComplexRule{}, err
 		}
 	}
 
@@ -105,7 +119,7 @@ func NewComplexRule(base, pattern, to string, ext []string, matcher httpserver.R
 		if len(v) < 2 || (len(v) < 3 && v[0] == '!') {
 			// check if no extension is specified
 			if v != "/" && v != "!/" {
-				return nil, fmt.Errorf("invalid extension %v", v)
+				return ComplexRule{}, fmt.Errorf("invalid extension %v", v)
 			}
 		}
 	}
@@ -118,7 +132,7 @@ func NewComplexRule(base, pattern, to string, ext []string, matcher httpserver.R
 		httpserver.PathMatcher(base),
 	)
 
-	return &ComplexRule{
+	return ComplexRule{
 		Base:           base,
 		To:             to,
 		Exts:           ext,
@@ -128,13 +142,13 @@ func NewComplexRule(base, pattern, to string, ext []string, matcher httpserver.R
 }
 
 // BasePath satisfies httpserver.Config
-func (r *ComplexRule) BasePath() string { return r.Base }
+func (r ComplexRule) BasePath() string { return r.Base }
 
 // Match satisfies httpserver.Config.
 //
 // Though ComplexRule embeds a RequestMatcher, additional
 // checks are needed which requires a custom implementation.
-func (r *ComplexRule) Match(req *http.Request) bool {
+func (r ComplexRule) Match(req *http.Request) bool {
 	// validate RequestMatcher
 	// includes if and path
 	if !r.RequestMatcher.Match(req) {
@@ -155,7 +169,7 @@ func (r *ComplexRule) Match(req *http.Request) bool {
 }
 
 // Rewrite rewrites the internal location of the current request.
-func (r *ComplexRule) Rewrite(fs http.FileSystem, req *http.Request) (re Result) {
+func (r ComplexRule) Rewrite(fs http.FileSystem, req *http.Request) (re Result) {
 	replacer := newReplacer(req)
 
 	// validate regexp if present
@@ -189,7 +203,7 @@ func (r *ComplexRule) Rewrite(fs http.FileSystem, req *http.Request) (re Result)
 
 // matchExt matches rPath against registered file extensions.
 // Returns true if a match is found and false otherwise.
-func (r *ComplexRule) matchExt(rPath string) bool {
+func (r ComplexRule) matchExt(rPath string) bool {
 	f := filepath.Base(rPath)
 	ext := path.Ext(f)
 	if ext == "" {
@@ -216,14 +230,14 @@ func (r *ComplexRule) matchExt(rPath string) bool {
 	return !mustUse
 }
 
-func (r *ComplexRule) regexpMatches(rPath string) []string {
+func (r ComplexRule) regexpMatches(rPath string) []string {
 	if r.Regexp != nil {
 		// include trailing slash in regexp if present
 		start := len(r.Base)
 		if strings.HasSuffix(r.Base, "/") {
 			start--
 		}
-		return r.FindStringSubmatch(rPath[start:])
+		return r.Regexp.FindStringSubmatch(rPath[start:])
 	}
 	return nil
 }

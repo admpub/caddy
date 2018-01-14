@@ -1,5 +1,82 @@
 CHANGES
 
+0.10.10 (October 9, 2017)
+- Built with Go 1.9.1
+- Removed Caddy-Sponsors header
+- New 'on' directive that deprecates 'startup' and 'shutdown'
+- Changed CASE_SENSITIVE_PATH default to false
+- fastcgi: Support for SRV upstreams
+- redir: Rules with if statements are not checked for duplicates
+- Several minor bug fixes
+
+
+0.10.9 (September 12, 2017)
+- EULA bundled with official binaries
+- Caddy-Sponsors header to indicate personal-use license
+- proxy: Support for QUIC backends
+- templates: Write proper status code if proxied
+- tls: Fix bug related to cert renewals
+
+
+0.10.8 (September 8, 2017)
+- NACL compilation support
+- Merge multiple consecutive slashes when comparing paths
+- A few other bug fixes
+
+
+0.10.7 (August 25, 2017)
+- Built with Go 1.9
+- New 3rd-party plugin directives: jekyll, awses, forwardproxy
+- Different exit codes
+- Plan 9 support
+- Graceful binary upgrades with SIGUSR2
+- internal: Support X-Accel-Redir without paths to protect
+- templates: Can execute templates loaded by other middleware
+- A few really good bug fixes
+
+
+0.10.6 (July 28, 2017)
+- fastcgi: Fix runtime error for 32-bit and ARM architectures
+
+
+0.10.5 (July 27, 2017)
+- Renamed requestid directive to request_id
+- Set default idle timeout of 5 minutes
+- New 3rd-party plugin directives: cache, nobots, webdav
+- New Unix timestamp placeholder {when_unix}
+- Improved MITM detection on iOS clients
+- errors, log: Fix log rolling parsing
+- gzip: Convert any ETag header to weak etag
+- fastcgi: Reverted persistent connections (issue #1736)
+- proxy: Added header loaded balancing policy
+- proxy: Fix hang on chunked WebSockets (e.g. with HomeAssistant)
+- Several other bug fixes and minor internal improvements
+
+
+0.10.4 (June 28, 2017)
+- Vendor all dependencies
+- Improve MITM detection, add experimental Tor browser support
+- New requestid directive to add request IDs to each request
+- New HTTP plugins supported: authz, grpc, gopkg, reauth, restic
+- browse: Refreshed default UI and added symlink indicators
+- errors, log: Added rotate_compress directive to compress rolled logs
+- markdown: Template files loaded at each request instead of just once
+- proxy: Allow multiple Server header fields on downstream response
+- proxy: Perform health checks by body substring
+- rewrite,redir: Added 'not_starts_with' and 'not_ends_with' operators
+- tls: New ca subdirective to specify CA endpoint per-site
+- Several bug fixes
+
+
+0.10.3 (May 19, 2017)
+- Replace 'maxrequestbody' directive with 'limits' directive
+- proxy: Configurable port for health check
+- proxy: New load balance policy: uri_hash
+- templates: Renamed .Push context action to .AddLink
+- tls: Allow narrower certificate renewal window at startup (#1680)
+- tls: Prefer ChaCha20 if hardware does not have AES-NI
+
+
 0.10.2 (May 2, 2017)
 - Hot fix for rule paths of "/" so that they match every request
 - fastcgi: Match request paths that don't start with "/" even if rule does
