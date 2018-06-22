@@ -35,6 +35,14 @@
 			"notests": true
 		},
 		{
+			"importpath": "github.com/bifurcation/mint",
+			"repository": "https://github.com/bifurcation/mint",
+			"vcs": "git",
+			"revision": "64af8ab8ccb81bd5d4eab356f79ba0939117d9f6",
+			"branch": "master",
+			"notests": true
+		},
+		{
 			"importpath": "github.com/codahale/aesnicheck",
 			"repository": "https://github.com/codahale/aesnicheck",
 			"vcs": "git",
@@ -80,7 +88,7 @@
 			"importpath": "github.com/google/uuid",
 			"repository": "https://github.com/google/uuid",
 			"vcs": "git",
-			"revision": "7e072fc3a7be179aee6d3359e46015aa8c995314",
+			"revision": "dec09d789f3dba190787f8b4454c7d3c936fed9e",
 			"branch": "master",
 			"notests": true
 		},
@@ -118,10 +126,18 @@
 			"notests": true
 		},
 		{
+			"importpath": "github.com/klauspost/cpuid",
+			"repository": "https://github.com/klauspost/cpuid",
+			"vcs": "git",
+			"revision": "ae832f27941af41db13bd6d8efd2493e3b22415a",
+			"branch": "master",
+			"notests": true
+		},
+		{
 			"importpath": "github.com/lucas-clemente/aes12",
 			"repository": "https://github.com/lucas-clemente/aes12",
 			"vcs": "git",
-			"revision": "25700e67be5c860bcc999137275b9ef8b65932bd",
+			"revision": "cd47fb39b79f867c6e4e5cd39cf7abd799f71670",
 			"branch": "master",
 			"notests": true
 		},
@@ -137,7 +153,7 @@
 			"importpath": "github.com/lucas-clemente/quic-go",
 			"repository": "https://github.com/lucas-clemente/quic-go",
 			"vcs": "git",
-			"revision": "a9e2a28315406f825cdfe41f8652110addeb84a5",
+			"revision": "da7708e47066ab0aff0f20f66b21c1f329db1eff",
 			"branch": "master",
 			"notests": true
 		},
@@ -182,12 +198,12 @@
 			"notests": true
 		},
 		{
-			"importpath": "github.com/xenolf/lego/acme",
+			"importpath": "github.com/xenolf/lego/acmev2",
 			"repository": "https://github.com/xenolf/lego",
 			"vcs": "git",
-			"revision": "4dde48a9b9916926a8dd4f69639c8dba40930355",
-			"branch": "master",
-			"path": "/acme",
+			"revision": "fad2257e11ae4ff31ed03739386873aa405dec2d",
+			"branch": "acmev2",
+			"path": "/acmev2",
 			"notests": true
 		},
 		{
@@ -200,21 +216,21 @@
 			"notests": true
 		},
 		{
-			"importpath": "golang.org/x/crypto/acme",
-			"repository": "https://go.googlesource.com/crypto",
-			"vcs": "git",
-			"revision": "2faea1465de239e4babd8f5905cc25b781712442",
-			"branch": "master",
-			"path": "acme",
-			"notests": true
-		},
-		{
 			"importpath": "golang.org/x/crypto/curve25519",
 			"repository": "https://go.googlesource.com/crypto",
 			"vcs": "git",
-			"revision": "2faea1465de239e4babd8f5905cc25b781712442",
+			"revision": "94eea52f7b742c7cbe0b03b22f0c4c8631ece122",
 			"branch": "master",
 			"path": "curve25519",
+			"notests": true
+		},
+		{
+			"importpath": "golang.org/x/crypto/ed25519",
+			"repository": "https://go.googlesource.com/crypto",
+			"vcs": "git",
+			"revision": "c4a91bd4f524f10d064139674cf55852e055ad01",
+			"branch": "master",
+			"path": "/ed25519",
 			"notests": true
 		},
 		{
@@ -439,10 +455,10 @@
 			"notests": true
 		},
 		{
-			"importpath": "gopkg.in/square/go-jose.v1",
-			"repository": "https://gopkg.in/square/go-jose.v1",
+			"importpath": "gopkg.in/square/go-jose.v2",
+			"repository": "https://gopkg.in/square/go-jose.v2",
 			"vcs": "git",
-			"revision": "aa2e30fdd1fe9dd3394119af66451ae790d50e0d",
+			"revision": "6ee92191fea850cdcab9a18867abf5f521cdbadb",
 			"branch": "master",
 			"notests": true
 		},

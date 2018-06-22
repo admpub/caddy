@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"strconv"
 
+	quic "github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/h2quic"
+	"github.com/lucas-clemente/quic-go/internal/protocol"
 	"github.com/lucas-clemente/quic-go/internal/testdata"
 
 	. "github.com/onsi/ginkgo"
@@ -20,11 +22,14 @@ const (
 )
 
 var (
-	PRData     = GeneratePRData(dataLen)
+	// PRData contains dataLen bytes of pseudo-random data.
+	PRData = GeneratePRData(dataLen)
+	// PRDataLong contains dataLenLong bytes of pseudo-random data.
 	PRDataLong = GeneratePRData(dataLenLong)
 
-	server *h2quic.Server
-	port   string
+	server         *h2quic.Server
+	stoppedServing chan struct{}
+	port           string
 )
 
 func init() {
@@ -75,10 +80,15 @@ func GeneratePRData(l int) []byte {
 	return res
 }
 
-func StartQuicServer() {
+// StartQuicServer starts a h2quic.Server.
+// versions is a slice of supported QUIC versions. It may be nil, then all supported versions are used.
+func StartQuicServer(versions []protocol.VersionNumber) {
 	server = &h2quic.Server{
 		Server: &http.Server{
 			TLSConfig: testdata.GetTLSConfig(),
+		},
+		QuicConfig: &quic.Config{
+			Versions: versions,
 		},
 	}
 
@@ -88,16 +98,22 @@ func StartQuicServer() {
 	Expect(err).NotTo(HaveOccurred())
 	port = strconv.Itoa(conn.LocalAddr().(*net.UDPAddr).Port)
 
+	stoppedServing = make(chan struct{})
+
 	go func() {
 		defer GinkgoRecover()
 		server.Serve(conn)
+		close(stoppedServing)
 	}()
 }
 
+// StopQuicServer stops the h2quic.Server.
 func StopQuicServer() {
 	Expect(server.Close()).NotTo(HaveOccurred())
+	Eventually(stoppedServing).Should(BeClosed())
 }
 
+// Port returns the UDP port of the QUIC server.
 func Port() string {
 	return port
 }

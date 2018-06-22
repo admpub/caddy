@@ -58,7 +58,8 @@ type Locker interface {
 	// successfully obtained the lock (no Waiter value was returned)
 	// should call this method, and it should be called only after
 	// the obtain/renew and store are finished, even if there was
-	// an error (or a timeout).
+	// an error (or a timeout). Unlock should also clean up any
+	// unused resources allocated during TryLock.
 	Unlock(name string) error
 }
 
@@ -107,6 +108,10 @@ type Storage interface {
 	// in StoreUser. The result is an empty string if there are no
 	// persisted users in storage.
 	MostRecentUserEmail() string
+
+	// Locker is necessary because synchronizing certificate maintenance
+	// depends on how storage is implemented.
+	Locker
 }
 
 // ErrNotExist is returned by Storage implementations when

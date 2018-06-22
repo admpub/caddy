@@ -36,6 +36,7 @@ import (
 	"github.com/mholt/caddy"
 	"github.com/mholt/caddy/caddyhttp/staticfiles"
 	"github.com/mholt/caddy/caddytls"
+	"github.com/mholt/caddy/telemetry"
 )
 
 // Server is the HTTP server implementation.
@@ -319,6 +320,9 @@ func (s *Server) Serve(ln net.Listener) error {
 	}
 
 	err := s.Server.Serve(ln)
+	if err == http.ErrServerClosed {
+		err = nil // not an error worth reporting since closing a server is intentional
+	}
 	if s.quicServer != nil {
 		s.quicServer.Close()
 	}
@@ -344,6 +348,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			DefaultErrorFunc(w, r, http.StatusInternalServerError)
 		}
 	}()
+
+	// record the User-Agent string (with a cap on its length to mitigate attacks)
+	ua := r.Header.Get("User-Agent")
+	if len(ua) > 512 {
+		ua = ua[:512]
+	}
+	uaHash := telemetry.FastHash([]byte(ua)) // this is a normalized field
+	go telemetry.SetNested("http_user_agent", uaHash, ua)
+	go telemetry.AppendUnique("http_user_agent_count", uaHash)
+	go telemetry.Increment("http_request_count")
 
 	// copy the original, unchanged URL into the context
 	// so it can be referenced by middlewares
@@ -389,7 +403,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 	if vhost == nil {
 		// check for ACME challenge even if vhost is nil;
 		// could be a new host coming online soon
-		if caddytls.HTTPChallengeHandler(w, r, "localhost", caddytls.DefaultHTTPAlternatePort) {
+		if caddytls.HTTPChallengeHandler(w, r, "localhost") {
 			return 0, nil
 		}
 		// otherwise, log the error and write a message to the client
@@ -405,7 +419,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 
 	// we still check for ACME challenge if the vhost exists,
 	// because we must apply its HTTP challenge config settings
-	if s.proxyHTTPChallenge(vhost, w, r) {
+	if caddytls.HTTPChallengeHandler(w, r, vhost.ListenHost) {
 		return 0, nil
 	}
 
@@ -413,31 +427,45 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 	// the URL path, so a request to example.com/foo/blog on the site
 	// defined as example.com/foo appears as /blog instead of /foo/blog.
 	if pathPrefix != "/" {
-		r.URL.Path = strings.TrimPrefix(r.URL.Path, pathPrefix)
-		if !strings.HasPrefix(r.URL.Path, "/") {
-			r.URL.Path = "/" + r.URL.Path
-		}
+		r.URL = trimPathPrefix(r.URL, pathPrefix)
+	}
+
+	// enforce strict host matching, which ensures that the SNI
+	// value (if any), matches the Host header; essential for
+	// sites that rely on TLS ClientAuth sharing a port with
+	// sites that do not - if mismatched, close the connection
+	if vhost.StrictHostMatching && r.TLS != nil &&
+		strings.ToLower(r.TLS.ServerName) != strings.ToLower(hostname) {
+		r.Close = true
+		log.Printf("[ERROR] %s - strict host matching: SNI (%s) and HTTP Host (%s) values differ",
+			vhost.Addr, r.TLS.ServerName, hostname)
+		return http.StatusForbidden, nil
 	}
 
 	return vhost.middlewareChain.ServeHTTP(w, r)
 }
 
-// proxyHTTPChallenge solves the ACME HTTP challenge if r is the HTTP
-// request for the challenge. If it is, and if the request has been
-// fulfilled (response written), true is returned; false otherwise.
-// If you don't have a vhost, just call the challenge handler directly.
-func (s *Server) proxyHTTPChallenge(vhost *SiteConfig, w http.ResponseWriter, r *http.Request) bool {
-	if vhost.Addr.Port != caddytls.HTTPChallengePort {
-		return false
+func trimPathPrefix(u *url.URL, prefix string) *url.URL {
+	// We need to use URL.EscapedPath() when trimming the pathPrefix as
+	// URL.Path is ambiguous about / or %2f - see docs. See #1927
+	trimmedPath := strings.TrimPrefix(u.EscapedPath(), prefix)
+	if !strings.HasPrefix(trimmedPath, "/") {
+		trimmedPath = "/" + trimmedPath
 	}
-	if vhost.TLS != nil && vhost.TLS.Manual {
-		return false
+	// After trimming path reconstruct uri string with Query before parsing
+	trimmedURI := trimmedPath
+	if u.RawQuery != "" || u.ForceQuery == true {
+		trimmedURI = trimmedPath + "?" + u.RawQuery
 	}
-	altPort := caddytls.DefaultHTTPAlternatePort
-	if vhost.TLS != nil && vhost.TLS.AltHTTPPort != "" {
-		altPort = vhost.TLS.AltHTTPPort
+	if u.Fragment != "" {
+		trimmedURI = trimmedURI + "#" + u.Fragment
 	}
-	return caddytls.HTTPChallengeHandler(w, r, vhost.ListenHost, altPort)
+	trimmedURL, err := url.Parse(trimmedURI)
+	if err != nil {
+		log.Printf("[ERROR] Unable to parse trimmed URL %s: %v", trimmedURI, err)
+		return u
+	}
+	return trimmedURL
 }
 
 // Address returns the address s was assigned to listen on.
