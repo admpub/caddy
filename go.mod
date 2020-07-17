@@ -2,8 +2,6 @@ module github.com/caddyserver/caddy
 
 go 1.13
 
-replace github.com/caddyserver/caddy => github.com/admpub/caddy
-
 require (
 	github.com/dustin/go-humanize v1.0.0
 	github.com/flynn/go-shlex v0.0.0-20150515145356-3f9db97f8568
