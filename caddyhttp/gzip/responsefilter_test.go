@@ -17,11 +17,12 @@ package gzip
 import (
 	"compress/gzip"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 )
 
 func TestLengthFilter(t *testing.T) {
@@ -47,7 +48,7 @@ func TestLengthFilter(t *testing.T) {
 		for j, filter := range filters {
 			r := httptest.NewRecorder()
 			r.Header().Set("Content-Length", fmt.Sprint(ts.length))
-			wWriter := NewResponseFilterWriter([]ResponseFilter{filter}, &gzipResponseWriter{gzip.NewWriter(r), &httpserver.ResponseWriterWrapper{ResponseWriter: r}, false})
+			wWriter := NewResponseFilterWriter([]ResponseFilter{filter}, &gzipResponseWriter{gzip.NewWriter(r), &httpserver.ResponseWriterWrapper{ResponseWriter: r}, false, nil})
 			if filter.ShouldCompress(wWriter) != ts.shouldCompress[j] {
 				t.Errorf("Test %v: Expected %v found %v", i, ts.shouldCompress[j], filter.ShouldCompress(r))
 			}
@@ -77,7 +78,9 @@ func TestResponseFilterWriter(t *testing.T) {
 	for i, ts := range tests {
 		server.Next = httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
 			w.Header().Set("Content-Length", fmt.Sprint(len(ts.body)))
-			w.Write([]byte(ts.body))
+			if _, err := w.Write([]byte(ts.body)); err != nil {
+				log.Println("[ERROR] failed to write response: ", err)
+			}
 			return 200, nil
 		})
 
@@ -86,7 +89,9 @@ func TestResponseFilterWriter(t *testing.T) {
 
 		w := httptest.NewRecorder()
 
-		server.ServeHTTP(w, r)
+		if _, err := server.ServeHTTP(w, r); err != nil {
+			log.Println("[ERROR] unable to serve a gzipped response: ", err)
+		}
 
 		resp := w.Body.String()
 
@@ -109,7 +114,9 @@ func TestResponseGzippedOutput(t *testing.T) {
 
 	server.Next = httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
 		w.Header().Set("Content-Encoding", "gzip")
-		w.Write([]byte("gzipped"))
+		if _, err := w.Write([]byte("gzipped")); err != nil {
+			log.Println("[ERROR] failed to write response: ", err)
+		}
 		return 200, nil
 	})
 
@@ -117,7 +124,9 @@ func TestResponseGzippedOutput(t *testing.T) {
 	r.Header.Set("Accept-Encoding", "gzip")
 
 	w := httptest.NewRecorder()
-	server.ServeHTTP(w, r)
+	if _, err := server.ServeHTTP(w, r); err != nil {
+		log.Println("[ERROR] unable to serve a gzipped response: ", err)
+	}
 	resp := w.Body.String()
 
 	if resp != "gzipped" {

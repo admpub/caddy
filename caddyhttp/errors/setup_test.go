@@ -19,8 +19,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 )
 
 func TestSetup(t *testing.T) {
@@ -179,6 +179,11 @@ func TestErrorsParse(t *testing.T) {
 			* generic_error.html
 			* generic_error.html
 		}`, true, ErrorHandler{ErrorPages: map[int]string{}, Log: &httpserver.Logger{}}},
+		{`errors /path error.txt {
+			404 
+		}`, true, ErrorHandler{ErrorPages: map[int]string{}, Log: &httpserver.Logger{}}},
+
+		{`errors /path error.txt`, true, ErrorHandler{ErrorPages: map[int]string{}, Log: &httpserver.Logger{}}},
 	}
 
 	for i, test := range tests {

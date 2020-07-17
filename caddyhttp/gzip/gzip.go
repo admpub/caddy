@@ -17,12 +17,13 @@
 package gzip
 
 import (
+	"compress/gzip"
 	"io"
 	"net/http"
 	"strings"
 
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 )
 
 func init() {
@@ -65,21 +66,31 @@ outer:
 			}
 		}
 
-		// gzipWriter modifies underlying writer at init,
-		// use a discard writer instead to leave ResponseWriter in
-		// original form.
-		gzipWriter := getWriter(c.Level)
-		defer putWriter(c.Level, gzipWriter)
+		// In order to avoid unused memory allocation, gzip.putWriter only be called when gzip compression happened.
+		// see https://github.com/caddyserver/caddy/issues/2395
 		gz := &gzipResponseWriter{
-			Writer:                gzipWriter,
 			ResponseWriterWrapper: &httpserver.ResponseWriterWrapper{ResponseWriter: w},
+			newWriter: func() io.Writer {
+				// gzipWriter modifies underlying writer at init,
+				// use a discard writer instead to leave ResponseWriter in
+				// original form.
+				return getWriter(c.Level)
+			},
 		}
+
+		defer func() {
+			if gzWriter, ok := gz.internalWriter.(*gzip.Writer); ok {
+				putWriter(c.Level, gzWriter)
+			}
+		}()
 
 		var rw http.ResponseWriter
 		// if no response filter is used
 		if len(c.ResponseFilters) == 0 {
 			// replace discard writer with ResponseWriter
-			gzipWriter.Reset(w)
+			if gzWriter, ok := gz.Writer().(*gzip.Writer); ok {
+				gzWriter.Reset(w)
+			}
 			rw = gz
 		} else {
 			// wrap gzip writer with ResponseFilterWriter
@@ -103,12 +114,13 @@ outer:
 	return g.Next.ServeHTTP(w, r)
 }
 
-// gzipResponeWriter wraps the underlying Write method
+// gzipResponseWriter wraps the underlying Write method
 // with a gzip.Writer to compress the output.
 type gzipResponseWriter struct {
-	io.Writer
+	internalWriter io.Writer
 	*httpserver.ResponseWriterWrapper
 	statusCodeWritten bool
+	newWriter         func() io.Writer
 }
 
 // WriteHeader wraps the underlying WriteHeader method to prevent
@@ -118,7 +130,19 @@ type gzipResponseWriter struct {
 func (w *gzipResponseWriter) WriteHeader(code int) {
 	w.Header().Del("Content-Length")
 	w.Header().Set("Content-Encoding", "gzip")
-	w.Header().Add("Vary", "Accept-Encoding")
+	varyList, exist := w.Header()["Vary"]
+	shouldAddVary := true
+	if exist {
+		for _, vary := range varyList {
+			if vary == "Accept-Encoding" {
+				shouldAddVary = false
+				break
+			}
+		}
+	}
+	if shouldAddVary {
+		w.Header().Add("Vary", "Accept-Encoding")
+	}
 	originalEtag := w.Header().Get("ETag")
 	if originalEtag != "" && !strings.HasPrefix(originalEtag, "W/") {
 		w.Header().Set("ETag", "W/"+originalEtag)
@@ -135,8 +159,16 @@ func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 	if !w.statusCodeWritten {
 		w.WriteHeader(http.StatusOK)
 	}
-	n, err := w.Writer.Write(b)
+	n, err := w.Writer().Write(b)
 	return n, err
+}
+
+//Writer use a lazy way to initialize Writer
+func (w *gzipResponseWriter) Writer() io.Writer {
+	if w.internalWriter == nil {
+		w.internalWriter = w.newWriter()
+	}
+	return w.internalWriter
 }
 
 // Interface guards

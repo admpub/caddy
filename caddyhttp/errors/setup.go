@@ -20,8 +20,8 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 )
 
 // setup configures a new errors middleware instance.
@@ -121,6 +121,10 @@ func errorsParse(c *caddy.Controller) (*ErrorHandler, error) {
 				handler.Log.Output = args[0]
 				handler.Log.Roller = httpserver.DefaultLogRoller()
 			}
+		}
+
+		if len(args) > 1 {
+			return handler, c.Errf("Only 1 Argument expected for errors directive")
 		}
 
 		// Configuration may be in a block

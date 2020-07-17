@@ -28,7 +28,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 )
 
 // ServeHTTP implements the httpserver.Handler interface.
@@ -109,6 +109,10 @@ func (t Templates) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error
 
 		// set the actual content length now that the template was executed
 		w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+
+		// delete the headers related to cache
+		w.Header().Del("ETag")
+		w.Header().Del("Last-Modified")
 
 		// get the modification time in preparation for http.ServeContent
 		modTime, _ := time.Parse(http.TimeFormat, w.Header().Get("Last-Modified"))

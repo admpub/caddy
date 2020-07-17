@@ -21,7 +21,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/mholt/caddy/caddyfile"
+	"github.com/caddyserver/caddy/caddyfile"
 )
 
 // These are all the registered plugins.
@@ -70,6 +70,13 @@ func DescribePlugins() string {
 		str += "\nEvent hook plugins:\n"
 		for _, name := range pl["event_hooks"] {
 			str += "  hook." + name + "\n"
+		}
+	}
+
+	if len(pl["clustering"]) > 0 {
+		str += "\nClustering plugins:\n"
+		for _, name := range pl["clustering"] {
+			str += "  " + name + "\n"
 		}
 	}
 

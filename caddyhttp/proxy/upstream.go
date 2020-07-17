@@ -17,13 +17,17 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,8 +36,8 @@ import (
 
 	"crypto/tls"
 
-	"github.com/mholt/caddy/caddyfile"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy/caddyfile"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 )
 
 var (
@@ -49,6 +53,7 @@ type staticUpstream struct {
 	Hosts             HostPool
 	Policy            Policy
 	KeepAlive         int
+	FallbackDelay     time.Duration
 	Timeout           time.Duration
 	FailTimeout       time.Duration
 	TryDuration       time.Duration
@@ -63,15 +68,38 @@ type staticUpstream struct {
 		Port          string
 		ContentString string
 	}
-	WithoutPathPrefix  string
-	IgnoredSubPaths    []string
-	insecureSkipVerify bool
-	MaxFails           int32
-	resolver           srvResolver
+	WithoutPathPrefix            string
+	IgnoredSubPaths              []string
+	insecureSkipVerify           bool
+	MaxFails                     int32
+	resolver                     srvResolver
+	CaCertPool                   *x509.CertPool
+	upstreamHeaderReplacements   headerReplacements
+	downstreamHeaderReplacements headerReplacements
+	ClientKeyPair                *tls.Certificate
 }
 
 type srvResolver interface {
 	LookupSRV(context.Context, string, string, string) (string, []*net.SRV, error)
+}
+
+// headerReplacement stores a compiled regex matcher and a string replacer, for replacement rules
+type headerReplacement struct {
+	regexp *regexp.Regexp
+	to     string
+}
+
+// headerReplacements stores a mapping of canonical MIME header to headerReplacement
+// Implements a subset of http.Header functions, to allow convenient addition and deletion of rules
+type headerReplacements map[string][]headerReplacement
+
+func (h headerReplacements) Add(key string, value headerReplacement) {
+	key = textproto.CanonicalMIMEHeaderKey(key)
+	h[key] = append(h[key], value)
+}
+
+func (h headerReplacements) Del(key string) {
+	delete(h, textproto.CanonicalMIMEHeaderKey(key))
 }
 
 // NewStaticUpstreams parses the configuration input and sets up
@@ -83,18 +111,20 @@ func NewStaticUpstreams(c caddyfile.Dispenser, host string) ([]Upstream, error) 
 	for c.Next() {
 
 		upstream := &staticUpstream{
-			from:              "",
-			stop:              make(chan struct{}),
-			upstreamHeaders:   make(http.Header),
-			downstreamHeaders: make(http.Header),
-			Hosts:             nil,
-			Policy:            &Random{},
-			MaxFails:          1,
-			TryInterval:       250 * time.Millisecond,
-			MaxConns:          0,
-			KeepAlive:         http.DefaultMaxIdleConnsPerHost,
-			Timeout:           30 * time.Second,
-			resolver:          net.DefaultResolver,
+			from:                         "",
+			stop:                         make(chan struct{}),
+			upstreamHeaders:              make(http.Header),
+			downstreamHeaders:            make(http.Header),
+			Hosts:                        nil,
+			Policy:                       &Random{},
+			MaxFails:                     1,
+			TryInterval:                  250 * time.Millisecond,
+			MaxConns:                     0,
+			KeepAlive:                    http.DefaultMaxIdleConnsPerHost,
+			Timeout:                      30 * time.Second,
+			resolver:                     net.DefaultResolver,
+			upstreamHeaderReplacements:   make(headerReplacements),
+			downstreamHeaderReplacements: make(headerReplacements),
 		}
 
 		if !c.Args(&upstream.from) {
@@ -217,9 +247,11 @@ func (u *staticUpstream) NewHost(host string) (*UpstreamHost, error) {
 				return false
 			}
 		}(u),
-		WithoutPathPrefix: u.WithoutPathPrefix,
-		MaxConns:          u.MaxConns,
-		HealthCheckResult: atomic.Value{},
+		WithoutPathPrefix:            u.WithoutPathPrefix,
+		MaxConns:                     u.MaxConns,
+		HealthCheckResult:            atomic.Value{},
+		UpstreamHeaderReplacements:   u.upstreamHeaderReplacements,
+		DownstreamHeaderReplacements: u.downstreamHeaderReplacements,
 	}
 
 	baseURL, err := url.Parse(uh.Name)
@@ -227,9 +259,17 @@ func (u *staticUpstream) NewHost(host string) (*UpstreamHost, error) {
 		return nil, err
 	}
 
-	uh.ReverseProxy = NewSingleHostReverseProxy(baseURL, uh.WithoutPathPrefix, u.KeepAlive, u.Timeout)
+	uh.ReverseProxy = NewSingleHostReverseProxy(baseURL, uh.WithoutPathPrefix, u.KeepAlive, u.Timeout, u.FallbackDelay)
 	if u.insecureSkipVerify {
 		uh.ReverseProxy.UseInsecureTransport()
+	}
+
+	if u.CaCertPool != nil {
+		uh.ReverseProxy.UseOwnCACertificates(u.CaCertPool)
+	}
+
+	if u.ClientKeyPair != nil {
+		uh.ReverseProxy.UseClientCertificates(u.ClientKeyPair)
 	}
 
 	return uh, nil
@@ -295,6 +335,8 @@ func parseUpstream(u string) ([]string, error) {
 }
 
 func parseBlock(c *caddyfile.Dispenser, u *staticUpstream, hasSrv bool) error {
+	var isUpstream bool
+
 	switch c.Val() {
 	case "policy":
 		if !c.NextArg() {
@@ -309,6 +351,15 @@ func parseBlock(c *caddyfile.Dispenser, u *staticUpstream, hasSrv bool) error {
 			arg = c.Val()
 		}
 		u.Policy = policyCreateFunc(arg)
+	case "fallback_delay":
+		if !c.NextArg() {
+			return c.ArgErr()
+		}
+		dur, err := time.ParseDuration(c.Val())
+		if err != nil {
+			return err
+		}
+		u.FallbackDelay = dur
 	case "fail_timeout":
 		if !c.NextArg() {
 			return c.ArgErr()
@@ -415,29 +466,44 @@ func parseBlock(c *caddyfile.Dispenser, u *staticUpstream, hasSrv bool) error {
 		}
 		u.HealthCheck.ContentString = c.Val()
 	case "header_upstream":
-		var header, value string
-		if !c.Args(&header, &value) {
-			// When removing a header, the value can be optional.
-			if !strings.HasPrefix(header, "-") {
-				return c.ArgErr()
-			}
-		}
-		u.upstreamHeaders.Add(header, value)
+		isUpstream = true
+		fallthrough
 	case "header_downstream":
-		var header, value string
-		if !c.Args(&header, &value) {
-			// When removing a header, the value can be optional.
-			if !strings.HasPrefix(header, "-") {
+		var header, value, replaced string
+		if c.Args(&header, &value, &replaced) {
+			// Don't allow - or + in replacements
+			if strings.HasPrefix(header, "-") || strings.HasPrefix(header, "+") {
 				return c.ArgErr()
 			}
+			r, err := regexp.Compile(value)
+			if err != nil {
+				return err
+			}
+			if isUpstream {
+				u.upstreamHeaderReplacements.Add(header, headerReplacement{r, replaced})
+			} else {
+				u.downstreamHeaderReplacements.Add(header, headerReplacement{r, replaced})
+			}
+		} else {
+			if len(value) == 0 {
+				// When removing a header, the value can be optional.
+				if !strings.HasPrefix(header, "-") {
+					return c.ArgErr()
+				}
+			}
+			if isUpstream {
+				u.upstreamHeaders.Add(header, value)
+			} else {
+				u.downstreamHeaders.Add(header, value)
+			}
 		}
-		u.downstreamHeaders.Add(header, value)
 	case "transparent":
 		// Note: X-Forwarded-For header is always being appended for proxy connections
 		// See implementation of createUpstreamRequest in proxy.go
 		u.upstreamHeaders.Add("Host", "{host}")
 		u.upstreamHeaders.Add("X-Real-IP", "{remote}")
 		u.upstreamHeaders.Add("X-Forwarded-Proto", "{scheme}")
+		u.upstreamHeaders.Add("X-Forwarded-Port", "{server_port}")
 	case "websocket":
 		u.upstreamHeaders.Add("Connection", "{>Connection}")
 		u.upstreamHeaders.Add("Upgrade", "{>Upgrade}")
@@ -454,6 +520,34 @@ func parseBlock(c *caddyfile.Dispenser, u *staticUpstream, hasSrv bool) error {
 		u.IgnoredSubPaths = ignoredPaths
 	case "insecure_skip_verify":
 		u.insecureSkipVerify = true
+	case "ca_certificates":
+		caCertificates := c.RemainingArgs()
+		if len(caCertificates) == 0 {
+			return c.ArgErr()
+		}
+
+		pool := x509.NewCertPool()
+		caCertificatesAdded := make(map[string]struct{})
+		for _, caFile := range caCertificates {
+			// don't add cert to pool more than once
+			if _, ok := caCertificatesAdded[caFile]; ok {
+				continue
+			}
+			caCertificatesAdded[caFile] = struct{}{}
+
+			// any client with a certificate from this CA will be allowed to connect
+			caCrt, err := ioutil.ReadFile(caFile)
+			if err != nil {
+				return c.Err(err.Error())
+			}
+
+			// attempt to parse pem and append to cert pool
+			if ok := pool.AppendCertsFromPEM(caCrt); !ok {
+				return c.Errf("loading CA certificate '%s': no certificates were successfully parsed", caFile)
+			}
+		}
+
+		u.CaCertPool = pool
 	case "keepalive":
 		if !c.NextArg() {
 			return c.ArgErr()
@@ -475,9 +569,30 @@ func parseBlock(c *caddyfile.Dispenser, u *staticUpstream, hasSrv bool) error {
 			return c.Errf("unable to parse timeout duration '%s'", c.Val())
 		}
 		u.Timeout = dur
+	case "tls_client":
+		if !c.NextArg() {
+                        return c.ArgErr()
+                }
+                clientCertFile := c.Val()
+		if !c.NextArg() {
+                        return c.ArgErr()
+                }
+                clientKeyFile := c.Val()
+		clientKeyPair, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
+        	if (err != nil) {
+                	return c.Errf("unable to load keypair from certfile:%s keyfile:%s", clientCertFile, clientKeyFile)
+        	}
+		u.ClientKeyPair = &clientKeyPair
 	default:
 		return c.Errf("unknown property '%s'", c.Val())
 	}
+
+	// these settings are at odds with one another. insecure_skip_verify disables security features over HTTPS
+	// which is what we are trying to achieve with ca_certificates
+	if u.insecureSkipVerify && u.CaCertPool != nil {
+		return c.Errf("both insecure_skip_verify and ca_certificates cannot be set in the proxy directive")
+	}
+
 	return nil
 }
 
@@ -537,8 +652,10 @@ func (u *staticUpstream) healthCheck() {
 					return true
 				}
 				defer func() {
-					io.Copy(ioutil.Discard, r.Body)
-					r.Body.Close()
+					if _, err := io.Copy(ioutil.Discard, r.Body); err != nil {
+						log.Println("[ERROR] failed to copy: ", err)
+					}
+					_ = r.Body.Close()
 				}()
 				if r.StatusCode < 200 || r.StatusCode >= 400 {
 					return true
@@ -547,7 +664,7 @@ func (u *staticUpstream) healthCheck() {
 					return false
 				}
 				// TODO ReadAll will be replaced if deemed necessary
-				//      See https://github.com/mholt/caddy/pull/1691
+				//      See https://github.com/caddyserver/caddy/pull/1691
 				buf, err := ioutil.ReadAll(r.Body)
 				if err != nil {
 					return true
@@ -613,11 +730,26 @@ func (u *staticUpstream) Select(r *http.Request) *UpstreamHost {
 
 func (u *staticUpstream) AllowedPath(requestPath string) bool {
 	for _, ignoredSubPath := range u.IgnoredSubPaths {
-		if httpserver.Path(path.Clean(requestPath)).Matches(path.Join(u.From(), ignoredSubPath)) {
+		p := path.Clean(requestPath)
+		e := path.Join(u.From(), ignoredSubPath)
+		// Re-add a trailing slashes if the original
+		// paths had one and the cleaned paths don't
+		if strings.HasSuffix(requestPath, "/") && !strings.HasSuffix(p, "/") {
+			p = p + "/"
+		}
+		if strings.HasSuffix(ignoredSubPath, "/") && !strings.HasSuffix(e, "/") {
+			e = e + "/"
+		}
+		if httpserver.Path(p).Matches(e) {
 			return false
 		}
 	}
 	return true
+}
+
+// GetFallbackDelay returns u.FallbackDelay.
+func (u *staticUpstream) GetFallbackDelay() time.Duration {
+	return u.FallbackDelay
 }
 
 // GetTryDuration returns u.TryDuration.

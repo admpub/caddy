@@ -20,9 +20,9 @@ import (
 	"net/http"
 	"text/template"
 
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
-	"github.com/mholt/caddy/caddyhttp/staticfiles"
+	"github.com/caddyserver/caddy"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy/caddyhttp/staticfiles"
 )
 
 func init() {
@@ -326,7 +326,7 @@ footer {
 }
 </style>
 	</head>
-	<body>
+	<body onload='initFilter()'>
 		<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" height="0" width="0" style="position: absolute;">
 			<defs>
 				<!-- Folder -->
@@ -476,6 +476,16 @@ footer {
 		<script>
 			var filterEl = document.getElementById('filter');
 			filterEl.focus();
+
+			function initFilter() {
+				if (!filterEl.value) {
+					var filterParam = new URL(window.location.href).searchParams.get('filter');
+					if (filterParam) {
+						filterEl.value = filterParam;
+					}
+				}
+				filter();
+			}
 
 			function filter() {
 				var q = filterEl.value.trim().toLowerCase();

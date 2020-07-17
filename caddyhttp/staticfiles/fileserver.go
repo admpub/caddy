@@ -28,7 +28,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
 // FileServer implements a production-ready file server
@@ -53,6 +53,9 @@ type FileServer struct {
 
 // ServeHTTP serves static files for r according to fs's configuration.
 func (fs FileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
+	if r.Method != "GET" && r.Method != "HEAD" {
+		return http.StatusMethodNotAllowed, nil
+	}
 	return fs.serveFile(w, r)
 }
 
@@ -113,7 +116,7 @@ func (fs FileServer) serveFile(w http.ResponseWriter, r *http.Request) (int, err
 			}
 			urlCopy.Path += "/"
 			http.Redirect(w, r, urlCopy.String(), http.StatusMovedPermanently)
-			return http.StatusMovedPermanently, nil
+			return 0, nil
 		}
 	} else {
 		// ensure no trailing slash
@@ -140,7 +143,7 @@ func (fs FileServer) serveFile(w http.ResponseWriter, r *http.Request) (int, err
 				urlCopy.Path = strings.TrimPrefix(urlCopy.Path, "/")
 			}
 			http.Redirect(w, r, urlCopy.String(), http.StatusMovedPermanently)
-			return http.StatusMovedPermanently, nil
+			return 0, nil
 		}
 	}
 
@@ -181,15 +184,14 @@ func (fs FileServer) serveFile(w http.ResponseWriter, r *http.Request) (int, err
 		return http.StatusNotFound, nil
 	}
 
-	etag := calculateEtag(d)
-
+	etagInfo := d
 	// look for compressed versions of the file on disk, if the client supports that encoding
 	for _, encoding := range staticEncodingPriority {
 		// see if the client accepts a compressed encoding we offer
 		acceptEncoding := strings.Split(r.Header.Get("Accept-Encoding"), ",")
 		accepted := false
 		for _, acc := range acceptEncoding {
-			if strings.TrimSpace(acc) == encoding {
+			if strings.TrimSpace(acc) == encoding.name {
 				accepted = true
 				break
 			}
@@ -201,7 +203,7 @@ func (fs FileServer) serveFile(w http.ResponseWriter, r *http.Request) (int, err
 		}
 
 		// see if the compressed version of this file exists
-		encodedFile, err := fs.Root.Open(reqPath + staticEncoding[encoding])
+		encodedFile, err := fs.Root.Open(reqPath + encoding.ext)
 		if err != nil {
 			continue
 		}
@@ -219,12 +221,14 @@ func (fs FileServer) serveFile(w http.ResponseWriter, r *http.Request) (int, err
 
 		// the encoded file is now what we're serving
 		f = encodedFile
-		etag = calculateEtag(encodedFileInfo)
+		etagInfo = encodedFileInfo
 		w.Header().Add("Vary", "Accept-Encoding")
-		w.Header().Set("Content-Encoding", encoding)
+		w.Header().Set("Content-Encoding", encoding.name)
 		w.Header().Set("Content-Length", strconv.FormatInt(encodedFileInfo.Size(), 10))
 		break
 	}
+
+	etag := calculateEtag(etagInfo)
 
 	// Set the ETag returned to the user-agent. Note that a conditional If-None-Match
 	// request is handled in http.ServeContent below, which checks against this ETag value.
@@ -276,16 +280,9 @@ var DefaultIndexPages = []string{
 	"default.txt",
 }
 
-// staticEncoding is a map of content-encoding to a file extension.
-// If client accepts given encoding (via Accept-Encoding header) and compressed file with given extensions exists
-// it will be served to the client instead of original one.
-var staticEncoding = map[string]string{
-	"gzip": ".gz",
-	"br":   ".br",
-}
-
 // staticEncodingPriority is a list of preferred static encodings (most efficient compression to least one).
-var staticEncodingPriority = []string{
-	"br",
-	"gzip",
+var staticEncodingPriority = []struct{ name, ext string }{
+	{"zstd", ".zst"},
+	{"br", ".br"},
+	{"gzip", ".gz"},
 }

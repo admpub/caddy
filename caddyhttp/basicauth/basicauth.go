@@ -26,14 +26,15 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 	"github.com/jimstudt/http-authentication/basic"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
 )
 
 // BasicAuth is middleware to protect resources with a username and password.
@@ -51,6 +52,15 @@ type BasicAuth struct {
 func (a BasicAuth) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
 	var protected, isAuthenticated bool
 	var realm string
+	var username string
+	var password string
+	var ok bool
+
+	// do not check for basic auth on OPTIONS call
+	if r.Method == http.MethodOptions {
+		// Pass-through when no paths match
+		return a.Next.ServeHTTP(w, r)
+	}
 
 	for _, rule := range a.Rules {
 		for _, res := range rule.Resources {
@@ -63,7 +73,7 @@ func (a BasicAuth) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error
 			realm = rule.Realm
 
 			// parse auth header
-			username, password, ok := r.BasicAuth()
+			username, password, ok = r.BasicAuth()
 
 			// check credentials
 			if !ok ||
@@ -94,7 +104,13 @@ func (a BasicAuth) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error
 			realm = "Restricted"
 		}
 		w.Header().Set("WWW-Authenticate", "Basic realm=\""+realm+"\"")
-		return http.StatusUnauthorized, nil
+
+		// Get a replacer so we can provide basic info for the authentication error.
+		repl := httpserver.NewReplacer(r, nil, "-")
+		repl.Set("user", username)
+		errstr := repl.Replace("BasicAuth: user \"{user}\" was not found or password was incorrect. {remote} {host} {uri} {proto}")
+		err := fmt.Errorf("%s", errstr)
+		return http.StatusUnauthorized, err
 	}
 
 	// Pass-through when no paths match
@@ -178,11 +194,15 @@ func PlainMatcher(passw string) PasswordMatcher {
 	// compare hashes of equal length instead of actual password
 	// to avoid leaking password length
 	passwHash := sha1.New()
-	passwHash.Write([]byte(passw))
+	if _, err := passwHash.Write([]byte(passw)); err != nil {
+		log.Printf("[ERROR] unable to write password hash: %v", err)
+	}
 	passwSum := passwHash.Sum(nil)
 	return func(pw string) bool {
 		pwHash := sha1.New()
-		pwHash.Write([]byte(pw))
+		if _, err := pwHash.Write([]byte(pw)); err != nil {
+			log.Printf("[ERROR] unable to write password hash: %v", err)
+		}
 		pwSum := pwHash.Sum(nil)
 		return subtle.ConstantTimeCompare([]byte(pwSum), []byte(passwSum)) == 1
 	}

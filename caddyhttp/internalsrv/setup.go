@@ -15,8 +15,8 @@
 package internalsrv
 
 import (
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 )
 
 func init() {
@@ -33,7 +33,12 @@ func setup(c *caddy.Controller) error {
 		return err
 	}
 
-	httpserver.GetConfig(c).AddMiddleware(func(next httpserver.Handler) httpserver.Handler {
+	// Append Internal paths to Caddy config HiddenFiles to ensure
+	// files do not appear in Browse
+	config := httpserver.GetConfig(c)
+	config.HiddenFiles = append(config.HiddenFiles, paths...)
+
+	config.AddMiddleware(func(next httpserver.Handler) httpserver.Handler {
 		return Internal{Next: next, Paths: paths}
 	})
 

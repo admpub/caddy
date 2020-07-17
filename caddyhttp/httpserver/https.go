@@ -18,9 +18,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddytls"
+	"github.com/caddyserver/caddy"
+	"github.com/caddyserver/caddy/caddytls"
+	"github.com/mholt/certmagic"
 )
 
 func activateHTTPS(cctx caddy.Context) error {
@@ -37,10 +39,13 @@ func activateHTTPS(cctx caddy.Context) error {
 
 	// place certificates and keys on disk
 	for _, c := range ctx.siteConfigs {
-		if c.TLS.OnDemand {
+		if !c.TLS.Managed {
+			continue
+		}
+		if c.TLS.Manager.OnDemand != nil {
 			continue // obtain these certificates on-demand instead
 		}
-		err := c.TLS.ObtainCert(c.TLS.Hostname, operatorPresent)
+		err := c.TLS.Manager.ObtainCert(c.TLS.Hostname, operatorPresent)
 		if err != nil {
 			return err
 		}
@@ -62,9 +67,14 @@ func activateHTTPS(cctx caddy.Context) error {
 	// on the ports we'd need to do ACME before we finish starting; parent process
 	// already running renewal ticker, so renewal won't be missed anyway.)
 	if !caddy.IsUpgrade() {
-		err = caddytls.RenewManagedCertificates(true)
-		if err != nil {
-			return err
+		ctx.instance.StorageMu.RLock()
+		certCache, ok := ctx.instance.Storage[caddytls.CertCacheInstStorageKey].(*certmagic.Cache)
+		ctx.instance.StorageMu.RUnlock()
+		if ok && certCache != nil {
+			err = certCache.RenewManagedCertificates()
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -95,13 +105,14 @@ func markQualifiedForAutoHTTPS(configs []*SiteConfig) {
 // value will always be nil.
 func enableAutoHTTPS(configs []*SiteConfig, loadCertificates bool) error {
 	for _, cfg := range configs {
-		if cfg == nil || cfg.TLS == nil || !cfg.TLS.Managed || cfg.TLS.OnDemand {
+		if cfg == nil || cfg.TLS == nil || !cfg.TLS.Managed ||
+			cfg.TLS.Manager == nil || cfg.TLS.Manager.OnDemand != nil {
 			continue
 		}
 		cfg.TLS.Enabled = true
 		cfg.Addr.Scheme = "https"
-		if loadCertificates && caddytls.HostQualifies(cfg.TLS.Hostname) {
-			_, err := cfg.TLS.CacheManagedCertificate(cfg.TLS.Hostname)
+		if loadCertificates && certmagic.HostQualifies(cfg.TLS.Hostname) {
+			_, err := cfg.TLS.Manager.CacheManagedCertificate(cfg.TLS.Hostname)
 			if err != nil {
 				return err
 			}
@@ -113,9 +124,9 @@ func enableAutoHTTPS(configs []*SiteConfig, loadCertificates bool) error {
 		// Set default port of 443 if not explicitly set
 		if cfg.Addr.Port == "" &&
 			cfg.TLS.Enabled &&
-			(!cfg.TLS.Manual || cfg.TLS.OnDemand) &&
+			(!cfg.TLS.Manual || cfg.TLS.Manager.OnDemand != nil) &&
 			cfg.Addr.Host != "localhost" {
-			cfg.Addr.Port = HTTPSPort
+			cfg.Addr.Port = strconv.Itoa(certmagic.HTTPSPort)
 		}
 	}
 	return nil
@@ -128,10 +139,12 @@ func enableAutoHTTPS(configs []*SiteConfig, loadCertificates bool) error {
 // only set up redirects for configs that qualify. It returns the updated list of
 // all configs.
 func makePlaintextRedirects(allConfigs []*SiteConfig) []*SiteConfig {
+	httpPort := strconv.Itoa(certmagic.HTTPPort)
+	httpsPort := strconv.Itoa(certmagic.HTTPSPort)
 	for i, cfg := range allConfigs {
 		if cfg.TLS.Managed &&
-			!hostHasOtherPort(allConfigs, i, HTTPPort) &&
-			(cfg.Addr.Port == HTTPSPort || !hostHasOtherPort(allConfigs, i, HTTPSPort)) {
+			!hostHasOtherPort(allConfigs, i, httpPort) &&
+			(cfg.Addr.Port == httpsPort || !hostHasOtherPort(allConfigs, i, httpsPort)) {
 			allConfigs = append(allConfigs, redirPlaintextHost(cfg))
 		}
 	}
@@ -157,10 +170,10 @@ func hostHasOtherPort(allConfigs []*SiteConfig, thisConfigIdx int, otherPort str
 // redirPlaintextHost returns a new plaintext HTTP configuration for
 // a virtualHost that simply redirects to cfg, which is assumed to
 // be the HTTPS configuration. The returned configuration is set
-// to listen on HTTPPort. The TLS field of cfg must not be nil.
+// to listen on certmagic.HTTPPort. The TLS field of cfg must not be nil.
 func redirPlaintextHost(cfg *SiteConfig) *SiteConfig {
 	redirPort := cfg.Addr.Port
-	if redirPort == HTTPSPort {
+	if redirPort == strconv.Itoa(certmagic.HTTPSPort) {
 		// By default, HTTPSPort should be DefaultHTTPSPort,
 		// which of course doesn't need to be explicitly stated
 		// in the Location header. Even if HTTPSPort is changed
@@ -200,14 +213,14 @@ func redirPlaintextHost(cfg *SiteConfig) *SiteConfig {
 	}
 
 	host := cfg.Addr.Host
-	port := HTTPPort
+	port := strconv.Itoa(certmagic.HTTPPort)
 	addr := net.JoinHostPort(host, port)
 
 	return &SiteConfig{
 		Addr:       Address{Original: addr, Host: host, Port: port},
 		ListenHost: cfg.ListenHost,
 		middleware: []Middleware{redirMiddleware},
-		TLS:        &caddytls.Config{AltHTTPPort: cfg.TLS.AltHTTPPort, AltTLSSNIPort: cfg.TLS.AltTLSSNIPort},
+		TLS:        &caddytls.Config{Manager: cfg.TLS.Manager},
 		Timeouts:   cfg.Timeouts,
 	}
 }

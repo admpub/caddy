@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,7 +28,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
 )
 
 // TestServeHTTP covers positive scenarios when serving files.
@@ -35,7 +36,7 @@ func TestServeHTTP(t *testing.T) {
 	tmpWebRootDir := beforeServeHTTPTest(t)
 	defer afterServeHTTPTest(t, tmpWebRootDir)
 
-	fileserver := FileServer{
+	fileServer := FileServer{
 		Root:       http.Dir(filepath.Join(tmpWebRootDir, webrootName)),
 		Hide:       []string{"dir/hidden.html"},
 		IndexPages: DefaultIndexPages,
@@ -263,6 +264,17 @@ func TestServeHTTP(t *testing.T) {
 			expectedLocation:    "https://foo/example.com/../",
 			expectedBodyContent: movedPermanently,
 		},
+		// Test 30 - try to get pre- file.
+		{
+			url:                   "https://foo/sub/gzipped.html",
+			acceptEncoding:        "zstd",
+			expectedStatus:        http.StatusOK,
+			expectedBodyContent:   testFiles[webrootSubGzippedHTMLZst],
+			expectedEtag:          `"2n9ci"`,
+			expectedVary:          "Accept-Encoding",
+			expectedEncoding:      "zstd",
+			expectedContentLength: strconv.Itoa(len(testFiles[webrootSubGzippedHTMLZst])),
+		},
 	}
 
 	for i, test := range tests {
@@ -288,7 +300,10 @@ func TestServeHTTP(t *testing.T) {
 		}
 
 		// perform the test
-		status, err := fileserver.ServeHTTP(responseRecorder, request)
+		status, err := fileServer.ServeHTTP(responseRecorder, request)
+		if status == 0 {
+			status = responseRecorder.Code
+		}
 		etag := responseRecorder.Header().Get("Etag")
 		body := responseRecorder.Body.String()
 		vary := responseRecorder.Header().Get("Vary")
@@ -357,7 +372,9 @@ func beforeServeHTTPTest(t *testing.T) string {
 		parentDir := filepath.Dir(absFile)
 		_, err = os.Stat(parentDir)
 		if err != nil {
-			os.MkdirAll(parentDir, os.ModePerm)
+			if err := os.MkdirAll(parentDir, os.ModePerm); err != nil {
+				log.Println("[ERROR] MkdirAll failed: ", err)
+			}
 		}
 
 		// now create the test files
@@ -371,7 +388,7 @@ func beforeServeHTTPTest(t *testing.T) string {
 		if err != nil {
 			t.Fatalf("Failed to write to %s. Error was: %v", absFile, err)
 		}
-		f.Close()
+		_ = f.Close()
 
 		// and set the last modified time
 		err = os.Chtimes(absFile, fixedTime, fixedTime)
@@ -429,7 +446,7 @@ func TestServeHTTPFailingFS(t *testing.T) {
 		fsErr           error
 		expectedStatus  int
 		expectedErr     error
-		expectedHeaders map[string]string
+		expectedHeaders map[string]struct{}
 	}{
 		{
 			fsErr:          os.ErrNotExist,
@@ -445,7 +462,7 @@ func TestServeHTTPFailingFS(t *testing.T) {
 			fsErr:           errCustom,
 			expectedStatus:  http.StatusServiceUnavailable,
 			expectedErr:     errCustom,
-			expectedHeaders: map[string]string{"Retry-After": "5"},
+			expectedHeaders: map[string]struct{}{"Retry-After": {}},
 		},
 	}
 
@@ -474,10 +491,9 @@ func TestServeHTTPFailingFS(t *testing.T) {
 
 		// check the headers - a special case for server under load
 		if test.expectedHeaders != nil && len(test.expectedHeaders) > 0 {
-			for expectedKey, expectedVal := range test.expectedHeaders {
-				actualVal := responseRecorder.Header().Get(expectedKey)
-				if expectedVal != actualVal {
-					t.Errorf("Test %d: Expected header %s: %s, found %s", i, expectedKey, expectedVal, actualVal)
+			for expectedKey := range test.expectedHeaders {
+				if _, ok := responseRecorder.Header()[expectedKey]; !ok {
+					t.Errorf("Test %d: Expected header %s, but was missing", i, expectedKey)
 				}
 			}
 		}
@@ -511,7 +527,7 @@ func TestServeHTTPFailingStat(t *testing.T) {
 
 	for i, test := range tests {
 		// initialize a file server. The FileSystem will not fail, but calls to the Stat method of the returned File object will
-		fileserver := FileServer{Root: failingFS{err: nil, fileImpl: failingFile{err: test.statErr}}}
+		fileServer := FileServer{Root: failingFS{err: nil, fileImpl: failingFile{err: test.statErr}}}
 
 		// prepare the request and response
 		request, err := http.NewRequest("GET", "https://foo/", nil)
@@ -520,7 +536,7 @@ func TestServeHTTPFailingStat(t *testing.T) {
 		}
 		responseRecorder := httptest.NewRecorder()
 
-		status, actualErr := fileserver.ServeHTTP(responseRecorder, request)
+		status, actualErr := fileServer.ServeHTTP(responseRecorder, request)
 
 		// check the status
 		if status != test.expectedStatus {
@@ -544,6 +560,7 @@ var (
 	webrootSubGzippedHTML              = filepath.Join(webrootName, "sub", "gzipped.html")
 	webrootSubGzippedHTMLGz            = filepath.Join(webrootName, "sub", "gzipped.html.gz")
 	webrootSubGzippedHTMLBr            = filepath.Join(webrootName, "sub", "gzipped.html.br")
+	webrootSubGzippedHTMLZst           = filepath.Join(webrootName, "sub", "gzipped.html.zst")
 	webrootSubBrotliHTML               = filepath.Join(webrootName, "sub", "brotli.html")
 	webrootSubBrotliHTMLGz             = filepath.Join(webrootName, "sub", "brotli.html.gz")
 	webrootSubBrotliHTMLBr             = filepath.Join(webrootName, "sub", "brotli.html.br")
@@ -571,9 +588,10 @@ var testFiles = map[string]string{
 	webrootSubGzippedHTML:              "<h1>gzipped.html</h1>",
 	webrootSubGzippedHTMLGz:            "1.gzipped.html.gz",
 	webrootSubGzippedHTMLBr:            "2.gzipped.html.br",
-	webrootSubBrotliHTML:               "3.brotli.html",
-	webrootSubBrotliHTMLGz:             "4.brotli.html.gz",
-	webrootSubBrotliHTMLBr:             "5.brotli.html.br",
+	webrootSubGzippedHTMLZst:           "3.gzipped.html.zst",
+	webrootSubBrotliHTML:               "4.brotli.html",
+	webrootSubBrotliHTMLGz:             "5.brotli.html.gz",
+	webrootSubBrotliHTMLBr:             "6.brotli.html.br",
 	webrootSubBarDirWithIndexIndexHTML: "<h1>bar/dirwithindex/index.html</h1>",
 }
 

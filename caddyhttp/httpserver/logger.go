@@ -23,8 +23,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hashicorp/go-syslog"
-	"github.com/mholt/caddy"
+	"github.com/caddyserver/caddy"
+	gsyslog "github.com/hashicorp/go-syslog"
 )
 
 var remoteSyslogPrefixes = map[string]string{
@@ -79,10 +79,8 @@ func (l Logger) MaskIP(ip string) string {
 
 	if reqIP.To4() != nil {
 		return reqIP.Mask(l.V4ipMask).String()
-	} else {
-		return reqIP.Mask(l.V6ipMask).String()
 	}
-
+	return reqIP.Mask(l.V6ipMask).String()
 }
 
 // ShouldLog returns true if the path is not exempted from
@@ -162,7 +160,7 @@ selectwriter:
 			return err
 		}
 
-		if l.Roller != nil {
+		if l.Roller != nil && !l.Roller.Disabled {
 			file.Close()
 			l.Roller.Filename = l.Output
 			l.writer = l.Roller.GetLogWriter()

@@ -20,7 +20,7 @@
 //   2. Call LoadCaddyfile() to get the Caddyfile.
 //      Pass in the name of the server type (like "http").
 //      Make sure the server type's package is imported
-//      (import _ "github.com/mholt/caddy/caddyhttp").
+//      (import _ "github.com/caddyserver/caddy/caddyhttp").
 //   3. Call caddy.Start() to start Caddy. You get back
 //      an Instance, on which you can call Restart() to
 //      restart it or Stop() to stop it.
@@ -43,8 +43,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mholt/caddy/caddyfile"
-	"github.com/mholt/caddy/telemetry"
+	"github.com/caddyserver/caddy/caddyfile"
+	"github.com/caddyserver/caddy/telemetry"
 )
 
 // Configurable application parameters
@@ -108,11 +108,12 @@ type Instance struct {
 	servers []ServerListener
 
 	// these callbacks execute when certain events occur
-	onFirstStartup  []func() error // starting, not as part of a restart
-	onStartup       []func() error // starting, even as part of a restart
-	onRestart       []func() error // before restart commences
-	onShutdown      []func() error // stopping, even as part of a restart
-	onFinalShutdown []func() error // stopping, not as part of a restart
+	OnFirstStartup  []func() error // starting, not as part of a restart
+	OnStartup       []func() error // starting, even as part of a restart
+	OnRestart       []func() error // before restart commences
+	OnRestartFailed []func() error // if restart failed
+	OnShutdown      []func() error // stopping, even as part of a restart
+	OnFinalShutdown []func() error // stopping, not as part of a restart
 
 	// storing values on an instance is preferable to
 	// global state because these will get garbage-
@@ -162,13 +163,13 @@ func (i *Instance) Stop() error {
 // the rest. All the non-nil errors will be returned.
 func (i *Instance) ShutdownCallbacks() []error {
 	var errs []error
-	for _, shutdownFunc := range i.onShutdown {
+	for _, shutdownFunc := range i.OnShutdown {
 		err := shutdownFunc()
 		if err != nil {
 			errs = append(errs, err)
 		}
 	}
-	for _, finalShutdownFunc := range i.onFinalShutdown {
+	for _, finalShutdownFunc := range i.OnFinalShutdown {
 		err := finalShutdownFunc()
 		if err != nil {
 			errs = append(errs, err)
@@ -186,9 +187,28 @@ func (i *Instance) Restart(newCaddyfile Input) (*Instance, error) {
 	i.wg.Add(1)
 	defer i.wg.Done()
 
+	var err error
+	// if something went wrong on restart then run onRestartFailed callbacks
+	defer func() {
+		r := recover()
+		if err != nil || r != nil {
+			for _, fn := range i.OnRestartFailed {
+				if err := fn(); err != nil {
+					log.Printf("[ERROR] Restart failed callback returned error: %v", err)
+				}
+			}
+			if err != nil {
+				log.Printf("[ERROR] Restart failed: %v", err)
+			}
+			if r != nil {
+				log.Printf("[PANIC] Restart: %v", r)
+			}
+		}
+	}()
+
 	// run restart callbacks
-	for _, fn := range i.onRestart {
-		err := fn()
+	for _, fn := range i.OnRestart {
+		err = fn()
 		if err != nil {
 			return i, err
 		}
@@ -224,21 +244,21 @@ func (i *Instance) Restart(newCaddyfile Input) (*Instance, error) {
 	newInst := &Instance{serverType: newCaddyfile.ServerType(), wg: i.wg, Storage: make(map[interface{}]interface{})}
 
 	// attempt to start new instance
-	err := startWithListenerFds(newCaddyfile, newInst, restartFds)
+	err = startWithListenerFds(newCaddyfile, newInst, restartFds)
 	if err != nil {
-		return i, err
+		return i, fmt.Errorf("starting with listener file descriptors: %v", err)
 	}
 
 	// success! stop the old instance
-	for _, shutdownFunc := range i.onShutdown {
+	err = i.Stop()
+	if err != nil {
+		return i, err
+	}
+	for _, shutdownFunc := range i.OnShutdown {
 		err = shutdownFunc()
 		if err != nil {
 			return i, err
 		}
-	}
-	err = i.Stop()
-	if err != nil {
-		return i, err
 	}
 
 	// Execute instantiation events
@@ -254,42 +274,6 @@ func (i *Instance) Restart(newCaddyfile Input) (*Instance, error) {
 // saved servers, graceful restarts will be provided.
 func (i *Instance) SaveServer(s Server, ln net.Listener) {
 	i.servers = append(i.servers, ServerListener{server: s, listener: ln})
-}
-
-// HasListenerWithAddress returns whether this package is
-// tracking a server using a listener with the address
-// addr.
-func HasListenerWithAddress(addr string) bool {
-	instancesMu.Lock()
-	defer instancesMu.Unlock()
-	for _, inst := range instances {
-		for _, sln := range inst.servers {
-			if listenerAddrEqual(sln.listener, addr) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// listenerAddrEqual compares a listener's address with
-// addr. Extra care is taken to match addresses with an
-// empty hostname portion, as listeners tend to report
-// [::]:80, for example, when the matching address that
-// created the listener might be simply :80.
-func listenerAddrEqual(ln net.Listener, addr string) bool {
-	lnAddr := ln.Addr().String()
-	hostname, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return lnAddr == addr
-	}
-	if lnAddr == net.JoinHostPort("::", port) {
-		return true
-	}
-	if lnAddr == net.JoinHostPort("0.0.0.0", port) {
-		return true
-	}
-	return hostname != "" && lnAddr == addr
 }
 
 // TCPServer is a type that can listen and serve connections.
@@ -370,6 +354,11 @@ type GracefulServer interface {
 	// address; you must store the address the
 	// server is to serve on some other way.
 	Address() string
+
+	// WrapListener wraps a listener with the
+	// listener middlewares configured for this
+	// server, if any.
+	WrapListener(net.Listener) net.Listener
 }
 
 // Listener is a net.Listener with an underlying file descriptor.
@@ -489,6 +478,10 @@ func Start(cdyfile Input) (*Instance, error) {
 	if pidErr := writePidFile(); pidErr != nil {
 		log.Printf("[ERROR] Could not write pidfile: %v", pidErr)
 	}
+
+	// Execute instantiation events
+	EmitEvent(InstanceStartupEvent, inst)
+
 	return inst, nil
 }
 
@@ -533,14 +526,14 @@ func startWithListenerFds(cdyfile Input, inst *Instance, restartFds map[string]r
 	// run startup callbacks
 	if !IsUpgrade() && restartFds == nil {
 		// first startup means not a restart or upgrade
-		for _, firstStartupFunc := range inst.onFirstStartup {
+		for _, firstStartupFunc := range inst.OnFirstStartup {
 			err = firstStartupFunc()
 			if err != nil {
 				return err
 			}
 		}
 	}
-	for _, startupFunc := range inst.onStartup {
+	for _, startupFunc := range inst.OnStartup {
 		err = startupFunc()
 		if err != nil {
 			return err
@@ -605,6 +598,12 @@ func ValidateAndExecuteDirectives(cdyfile Input, inst *Instance, justValidate bo
 	sblocks, err := loadServerBlocks(stypeName, cdyfile.Path(), bytes.NewReader(cdyfile.Body()))
 	if err != nil {
 		return err
+	}
+
+	for _, sb := range sblocks {
+		for dir := range sb.Tokens {
+			telemetry.AppendUnique("directives", dir)
+		}
 	}
 
 	inst.context = stype.NewContext(inst)
@@ -692,6 +691,11 @@ func executeDirectives(inst *Instance, filename string,
 func startServers(serverList []Server, inst *Instance, restartFds map[string]restartTriple) error {
 	errChan := make(chan error, len(serverList))
 
+	// used for signaling to error logging goroutine to terminate
+	stopChan := make(chan struct{})
+	// used to track termination of servers
+	stopWg := &sync.WaitGroup{}
+
 	for _, s := range serverList {
 		var (
 			ln  net.Listener
@@ -708,24 +712,25 @@ func startServers(serverList []Server, inst *Instance, restartFds map[string]res
 					file := os.NewFile(fdIndex, "")
 					ln, err = net.FileListener(file)
 					if err != nil {
-						return err
+						return fmt.Errorf("making listener from file: %v", err)
 					}
 					err = file.Close()
 					if err != nil {
-						return err
+						return fmt.Errorf("closing copy of listener file: %v", err)
 					}
 				}
 				if fdIndex, ok := loadedGob.ListenerFds["udp"+addr]; ok {
 					file := os.NewFile(fdIndex, "")
 					pc, err = net.FilePacketConn(file)
 					if err != nil {
-						return err
+						return fmt.Errorf("making packet connection from file: %v", err)
 					}
 					err = file.Close()
 					if err != nil {
-						return err
+						return fmt.Errorf("closing copy of packet connection file: %v", err)
 					}
 				}
+				ln = gs.WrapListener(ln)
 			}
 		}
 
@@ -738,75 +743,95 @@ func startServers(serverList []Server, inst *Instance, restartFds map[string]res
 				if old.listener != nil {
 					file, err := old.listener.File()
 					if err != nil {
-						return err
+						return fmt.Errorf("getting old listener file: %v", err)
 					}
 					ln, err = net.FileListener(file)
 					if err != nil {
-						return err
+						return fmt.Errorf("getting file listener: %v", err)
 					}
 					err = file.Close()
 					if err != nil {
-						return err
+						return fmt.Errorf("closing copy of listener file: %v", err)
 					}
 				}
 				// packetconn
 				if old.packet != nil {
 					file, err := old.packet.File()
 					if err != nil {
-						return err
+						return fmt.Errorf("getting old packet file: %v", err)
 					}
 					pc, err = net.FilePacketConn(file)
 					if err != nil {
-						return err
+						return fmt.Errorf("getting file packet connection: %v", err)
 					}
 					err = file.Close()
 					if err != nil {
-						return err
+						return fmt.Errorf("close copy of packet file: %v", err)
 					}
 				}
+				ln = gs.WrapListener(ln)
 			}
 		}
 
 		if ln == nil {
 			ln, err = s.Listen()
 			if err != nil {
-				return err
+				return fmt.Errorf("Listen: %v", err)
 			}
 		}
 		if pc == nil {
 			pc, err = s.ListenPacket()
 			if err != nil {
-				return err
+				return fmt.Errorf("ListenPacket: %v", err)
 			}
 		}
 
+		inst.servers = append(inst.servers, ServerListener{server: s, listener: ln, packet: pc})
+	}
+
+	for _, s := range inst.servers {
 		inst.wg.Add(2)
-		go func(s Server, ln net.Listener, pc net.PacketConn, inst *Instance) {
-			defer inst.wg.Done()
+		stopWg.Add(2)
+		func(s Server, ln net.Listener, pc net.PacketConn, inst *Instance) {
+			go func() {
+				defer func() {
+					inst.wg.Done()
+					stopWg.Done()
+				}()
+				errChan <- s.Serve(ln)
+			}()
 
 			go func() {
-				errChan <- s.Serve(ln)
-				defer inst.wg.Done()
+				defer func() {
+					inst.wg.Done()
+					stopWg.Done()
+				}()
+				errChan <- s.ServePacket(pc)
 			}()
-			errChan <- s.ServePacket(pc)
-		}(s, ln, pc, inst)
-
-		inst.servers = append(inst.servers, ServerListener{server: s, listener: ln, packet: pc})
+		}(s.server, s.listener, s.packet, inst)
 	}
 
 	// Log errors that may be returned from Serve() calls,
 	// these errors should only be occurring in the server loop.
 	go func() {
-		for err := range errChan {
-			if err == nil {
-				continue
+		for {
+			select {
+			case err := <-errChan:
+				if err != nil {
+					if !strings.Contains(err.Error(), "use of closed network connection") {
+						// this error is normal when closing the listener; see https://github.com/golang/go/issues/4373
+						log.Println(err)
+					}
+				}
+			case <-stopChan:
+				return
 			}
-			if strings.Contains(err.Error(), "use of closed network connection") {
-				// this error is normal when closing the listener; see https://github.com/golang/go/issues/4373
-				continue
-			}
-			log.Println(err)
 		}
+	}()
+
+	go func() {
+		stopWg.Wait()
+		stopChan <- struct{}{}
 	}()
 
 	return nil
@@ -863,6 +888,10 @@ func Stop() error {
 		}
 		inst := instances[0]
 		instancesMu.Unlock()
+		// Increase the instance waitgroup so that the last wait() call in
+		// caddymain/run.go blocks until this server instance has shut down
+		inst.wg.Add(1)
+		defer inst.wg.Done()
 		if err := inst.Stop(); err != nil {
 			log.Printf("[ERROR] Stopping %s: %v", inst.serverType, err)
 		}

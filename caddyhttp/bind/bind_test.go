@@ -17,8 +17,8 @@ package bind
 import (
 	"testing"
 
-	"github.com/mholt/caddy"
-	"github.com/mholt/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
 )
 
 func TestSetupBind(t *testing.T) {
@@ -32,7 +32,7 @@ func TestSetupBind(t *testing.T) {
 	if got, want := cfg.ListenHost, "1.2.3.4"; got != want {
 		t.Errorf("Expected the config's ListenHost to be %s, was %s", want, got)
 	}
-	if got, want := cfg.TLS.ListenHost, "1.2.3.4"; got != want {
+	if got, want := cfg.TLS.Manager.ListenHost, "1.2.3.4"; got != want {
 		t.Errorf("Expected the TLS config's ListenHost to be %s, was %s", want, got)
 	}
 }

@@ -21,8 +21,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mholt/caddy"
-	"github.com/xenolf/lego/acmev2"
+	"github.com/caddyserver/caddy"
+	"github.com/go-acme/lego/v3/certcrypto"
+	"github.com/mholt/certmagic"
 )
 
 func TestMain(m *testing.M) {
@@ -37,23 +38,34 @@ func TestMain(m *testing.M) {
 		os.Remove(certFile)
 		log.Fatal(err)
 	}
+	err = ioutil.WriteFile(caCertFile, caCert, 0644)
+	if err != nil {
+		os.Remove(keyFile)
+		os.Remove(certFile)
+		log.Fatal(err)
+	}
 
 	result := m.Run()
 
 	os.Remove(certFile)
 	os.Remove(keyFile)
+	os.Remove(caCertFile)
 	os.Exit(result)
 }
 
 func TestSetupParseBasic(t *testing.T) {
-	certCache := &certificateCache{cache: make(map[string]Certificate)}
-	cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
+	tmpdir, err := ioutil.TempDir("", "caddytls_setup_test_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
 
+	certmagic.Default.Storage = &certmagic.FileStorage{Path: tmpdir}
+	cfg := &Config{Manager: certmagic.NewDefault()}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", `tls `+certFile+` `+keyFile+``)
-	c.Set(CertCacheInstStorageKey, certCache)
 
-	err := setupTLS(c)
+	err = setupTLS(c)
 	if err != nil {
 		t.Errorf("Expected no errors, got: %v", err)
 	}
@@ -70,8 +82,8 @@ func TestSetupParseBasic(t *testing.T) {
 	if cfg.ProtocolMinVersion != tls.VersionTLS12 {
 		t.Errorf("Expected 'tls1.2 (0x0303)' as ProtocolMinVersion, got %#v", cfg.ProtocolMinVersion)
 	}
-	if cfg.ProtocolMaxVersion != tls.VersionTLS12 {
-		t.Errorf("Expected 'tls1.2 (0x0303)' as ProtocolMaxVersion, got %v", cfg.ProtocolMaxVersion)
+	if cfg.ProtocolMaxVersion != tls.VersionTLS13 {
+		t.Errorf("Expected 'tls1.3 (0x0304)' as ProtocolMaxVersion, got %#v", cfg.ProtocolMaxVersion)
 	}
 
 	// Cipher checks
@@ -127,14 +139,19 @@ func TestSetupParseWithOptionalParams(t *testing.T) {
             must_staple
             alpn http/1.1
         }`
-	certCache := &certificateCache{cache: make(map[string]Certificate)}
-	cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
 
+	tmpdir, err := ioutil.TempDir("", "caddytls_setup_test_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpdir)
+
+	certmagic.Default.Storage = &certmagic.FileStorage{Path: tmpdir}
+	cfg := &Config{Manager: certmagic.NewDefault()}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
-	c.Set(CertCacheInstStorageKey, certCache)
 
-	err := setupTLS(c)
+	err = setupTLS(c)
 	if err != nil {
 		t.Errorf("Expected no errors, got: %v", err)
 	}
@@ -151,7 +168,7 @@ func TestSetupParseWithOptionalParams(t *testing.T) {
 		t.Errorf("Expected 3 Ciphers (not including TLS_FALLBACK_SCSV), got %v", len(cfg.Ciphers)-1)
 	}
 
-	if !cfg.MustStaple {
+	if !cfg.Manager.MustStaple {
 		t.Error("Expected must staple to be true")
 	}
 
@@ -164,11 +181,9 @@ func TestSetupDefaultWithOptionalParams(t *testing.T) {
 	params := `tls {
             ciphers RSA-3DES-EDE-CBC-SHA
         }`
-	certCache := &certificateCache{cache: make(map[string]Certificate)}
-	cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
+	cfg := &Config{Manager: &certmagic.Config{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
-	c.Set(CertCacheInstStorageKey, certCache)
 
 	err := setupTLS(c)
 	if err != nil {
@@ -184,11 +199,9 @@ func TestSetupParseWithWrongOptionalParams(t *testing.T) {
 	params := `tls ` + certFile + ` ` + keyFile + ` {
 			protocols ssl tls
 		}`
-	certCache := &certificateCache{cache: make(map[string]Certificate)}
-	cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
+	cfg := &Config{Manager: &certmagic.Config{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
-	c.Set(CertCacheInstStorageKey, certCache)
 
 	err := setupTLS(c)
 	if err == nil {
@@ -199,10 +212,9 @@ func TestSetupParseWithWrongOptionalParams(t *testing.T) {
 	params = `tls ` + certFile + ` ` + keyFile + ` {
 			ciphers not-valid-cipher
 		}`
-	cfg = new(Config)
+	cfg = &Config{Manager: &certmagic.Config{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c = caddy.NewTestController("", params)
-	c.Set(CertCacheInstStorageKey, certCache)
 	err = setupTLS(c)
 	if err == nil {
 		t.Error("Expected errors, but no error returned")
@@ -212,7 +224,7 @@ func TestSetupParseWithWrongOptionalParams(t *testing.T) {
 	params = `tls {
 			key_type ab123
 		}`
-	cfg = new(Config)
+	cfg = &Config{Manager: &certmagic.Config{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c = caddy.NewTestController("", params)
 	err = setupTLS(c)
@@ -224,10 +236,9 @@ func TestSetupParseWithWrongOptionalParams(t *testing.T) {
 	params = `tls {
 			curves ab123, cd456, ef789
 		}`
-	cfg = new(Config)
+	cfg = &Config{Manager: &certmagic.Config{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c = caddy.NewTestController("", params)
-	c.Set(CertCacheInstStorageKey, certCache)
 	err = setupTLS(c)
 	if err == nil {
 		t.Error("Expected errors, but no error returned")
@@ -239,8 +250,7 @@ func TestSetupParseWithClientAuth(t *testing.T) {
 	params := `tls ` + certFile + ` ` + keyFile + ` {
 			clients
 		}`
-	certCache := &certificateCache{cache: make(map[string]Certificate)}
-	cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
+	cfg := &Config{Manager: &certmagic.Config{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
 	err := setupTLS(c)
@@ -273,11 +283,10 @@ func TestSetupParseWithClientAuth(t *testing.T) {
 			clients verify_if_given
 		}`, tls.VerifyClientCertIfGiven, true, noCAs},
 	} {
-		certCache := &certificateCache{cache: make(map[string]Certificate)}
-		cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
+		cfg := &Config{Manager: certmagic.NewDefault()}
 		RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 		c := caddy.NewTestController("", caseData.params)
-		c.Set(CertCacheInstStorageKey, certCache)
+
 		err := setupTLS(c)
 		if caseData.expectedErr {
 			if err == nil {
@@ -327,11 +336,10 @@ func TestSetupParseWithCAUrl(t *testing.T) {
 				ca 1 2
 			}`, true, ""},
 	} {
-		certCache := &certificateCache{cache: make(map[string]Certificate)}
-		cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
+		cfg := &Config{Manager: &certmagic.Config{}}
 		RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 		c := caddy.NewTestController("", caseData.params)
-		c.Set(CertCacheInstStorageKey, certCache)
+
 		err := setupTLS(c)
 		if caseData.expectedErr {
 			if err == nil {
@@ -343,8 +351,8 @@ func TestSetupParseWithCAUrl(t *testing.T) {
 			t.Errorf("In case %d: Expected no errors, got: %v", caseNumber, err)
 		}
 
-		if cfg.CAUrl != caseData.expectedCAUrl {
-			t.Errorf("Expected '%v' as CAUrl, got %#v", caseData.expectedCAUrl, cfg.CAUrl)
+		if cfg.Manager.CA != caseData.expectedCAUrl {
+			t.Errorf("Expected '%v' as CAUrl, got %#v", caseData.expectedCAUrl, cfg.Manager.CA)
 		}
 	}
 }
@@ -353,19 +361,17 @@ func TestSetupParseWithKeyType(t *testing.T) {
 	params := `tls {
             key_type p384
         }`
-	certCache := &certificateCache{cache: make(map[string]Certificate)}
-	cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
+	cfg := &Config{Manager: &certmagic.Config{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
-	c.Set(CertCacheInstStorageKey, certCache)
 
 	err := setupTLS(c)
 	if err != nil {
 		t.Errorf("Expected no errors, got: %v", err)
 	}
 
-	if cfg.KeyType != acme.EC384 {
-		t.Errorf("Expected 'P384' as KeyType, got %#v", cfg.KeyType)
+	if cfg.Manager.KeyType != certcrypto.EC384 {
+		t.Errorf("Expected 'P384' as KeyType, got %#v", cfg.Manager.KeyType)
 	}
 }
 
@@ -373,11 +379,9 @@ func TestSetupParseWithCurves(t *testing.T) {
 	params := `tls {
             curves x25519 p256 p384 p521
         }`
-	certCache := &certificateCache{cache: make(map[string]Certificate)}
-	cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
+	cfg := &Config{Manager: &certmagic.Config{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
-	c.Set(CertCacheInstStorageKey, certCache)
 
 	err := setupTLS(c)
 	if err != nil {
@@ -402,11 +406,9 @@ func TestSetupParseWithOneTLSProtocol(t *testing.T) {
 	params := `tls {
             protocols tls1.2
         }`
-	certCache := &certificateCache{cache: make(map[string]Certificate)}
-	cfg := &Config{Certificates: make(map[string]string), certCache: certCache}
+	cfg := &Config{Manager: &certmagic.Config{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
-	c.Set(CertCacheInstStorageKey, certCache)
 
 	err := setupTLS(c)
 	if err != nil {
@@ -422,9 +424,30 @@ func TestSetupParseWithOneTLSProtocol(t *testing.T) {
 	}
 }
 
+func TestSetupParseWithEmail(t *testing.T) {
+	email := "user@example.com"
+	params := "tls " + email
+	cfg := &Config{Manager: &certmagic.Config{}}
+	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
+	c := caddy.NewTestController("", params)
+
+	err := setupTLS(c)
+	if err != nil {
+		t.Errorf("Expected no errors, got: %v", err)
+	}
+
+	if cfg.ACMEEmail != email {
+		t.Errorf("Expected cfg.ACMEEmail to be %#v, got %#v", email, cfg.ACMEEmail)
+	}
+	if cfg.Manager.Email != email {
+		t.Errorf("Expected cfg.Manager.Email to be %#v, got %#v", email, cfg.Manager.Email)
+	}
+}
+
 const (
-	certFile = "test_cert.pem"
-	keyFile  = "test_key.pem"
+	certFile   = "test_cert.pem"
+	keyFile    = "test_key.pem"
+	caCertFile = "ca_cert.crt"
 )
 
 var testCert = []byte(`-----BEGIN CERTIFICATE-----
@@ -448,4 +471,40 @@ MHcCAQEEIGLtRmwzYVcrH3J0BnzYbGPdWVF10i9p6mxkA4+b2fURoAoGCCqGSM49
 AwEHoUQDQgAEs22MtnG79K1mvIyjEO9GLx7BFD0tBbGnwQ0VPsuCxC6IeVuXbQDL
 SiVQvFZ6lUszTlczNxVkpEfqrM6xAupB7g==
 -----END EC PRIVATE KEY-----
+`)
+
+var caCert = []byte(`-----BEGIN CERTIFICATE-----
+MIIF2DCCA8CgAwIBAgIQTKr5yttjb+Af907YWwOGnTANBgkqhkiG9w0BAQwFADCB
+hTELMAkGA1UEBhMCR0IxGzAZBgNVBAgTEkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4G
+A1UEBxMHU2FsZm9yZDEaMBgGA1UEChMRQ09NT0RPIENBIExpbWl0ZWQxKzApBgNV
+BAMTIkNPTU9ETyBSU0EgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkwHhcNMTAwMTE5
+MDAwMDAwWhcNMzgwMTE4MjM1OTU5WjCBhTELMAkGA1UEBhMCR0IxGzAZBgNVBAgT
+EkdyZWF0ZXIgTWFuY2hlc3RlcjEQMA4GA1UEBxMHU2FsZm9yZDEaMBgGA1UEChMR
+Q09NT0RPIENBIExpbWl0ZWQxKzApBgNVBAMTIkNPTU9ETyBSU0EgQ2VydGlmaWNh
+dGlvbiBBdXRob3JpdHkwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCR
+6FSS0gpWsawNJN3Fz0RndJkrN6N9I3AAcbxT38T6KhKPS38QVr2fcHK3YX/JSw8X
+pz3jsARh7v8Rl8f0hj4K+j5c+ZPmNHrZFGvnnLOFoIJ6dq9xkNfs/Q36nGz637CC
+9BR++b7Epi9Pf5l/tfxnQ3K9DADWietrLNPtj5gcFKt+5eNu/Nio5JIk2kNrYrhV
+/erBvGy2i/MOjZrkm2xpmfh4SDBF1a3hDTxFYPwyllEnvGfDyi62a+pGx8cgoLEf
+Zd5ICLqkTqnyg0Y3hOvozIFIQ2dOciqbXL1MGyiKXCJ7tKuY2e7gUYPDCUZObT6Z
++pUX2nwzV0E8jVHtC7ZcryxjGt9XyD+86V3Em69FmeKjWiS0uqlWPc9vqv9JWL7w
+qP/0uK3pN/u6uPQLOvnoQ0IeidiEyxPx2bvhiWC4jChWrBQdnArncevPDt09qZah
+SL0896+1DSJMwBGB7FY79tOi4lu3sgQiUpWAk2nojkxl8ZEDLXB0AuqLZxUpaVIC
+u9ffUGpVRr+goyhhf3DQw6KqLCGqR84onAZFdr+CGCe01a60y1Dma/RMhnEw6abf
+Fobg2P9A3fvQQoh/ozM6LlweQRGBY84YcWsr7KaKtzFcOmpH4MN5WdYgGq/yapiq
+crxXStJLnbsQ/LBMQeXtHT1eKJ2czL+zUdqnR+WEUwIDAQABo0IwQDAdBgNVHQ4E
+FgQUu69+Aj36pvE8hI6t7jiY7NkyMtQwDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB
+/wQFMAMBAf8wDQYJKoZIhvcNAQEMBQADggIBAArx1UaEt65Ru2yyTUEUAJNMnMvl
+wFTPoCWOAvn9sKIN9SCYPBMtrFaisNZ+EZLpLrqeLppysb0ZRGxhNaKatBYSaVqM
+4dc+pBroLwP0rmEdEBsqpIt6xf4FpuHA1sj+nq6PK7o9mfjYcwlYRm6mnPTXJ9OV
+2jeDchzTc+CiR5kDOF3VSXkAKRzH7JsgHAckaVd4sjn8OoSgtZx8jb8uk2Intzna
+FxiuvTwJaP+EmzzV1gsD41eeFPfR60/IvYcjt7ZJQ3mFXLrrkguhxuhoqEwWsRqZ
+CuhTLJK7oQkYdQxlqHvLI7cawiiFwxv/0Cti76R7CZGYZ4wUAc1oBmpjIXUDgIiK
+boHGhfKppC3n9KUkEEeDys30jXlYsQab5xoq2Z0B15R97QNKyvDb6KkBPvVWmcke
+jkk9u+UJueBPSZI9FoJAzMxZxuY67RIuaTxslbH9qh17f4a+Hg4yRvv7E491f0yL
+S0Zj/gA0QHDBw7mh3aZw4gSzQbzpgJHqZJx64SIDqZxubw5lT2yHh17zbqD5daWb
+QOhTsiedSrnAdyGN/4fy3ryM7xfft0kL0fJuMAsaDk527RH89elWsn2/x20Kk4yl
+0MC2Hb46TpSi125sC8KKfPog88Tk5c0NqMuRkrF8hey1FGlmDoLnzc7ILaZRfyHB
+NVOFBkpdn627G190
+-----END CERTIFICATE-----
 `)

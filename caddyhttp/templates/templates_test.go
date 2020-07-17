@@ -17,13 +17,14 @@ package templates
 import (
 	"bytes"
 	"context"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 
-	"github.com/mholt/caddy/caddyhttp/httpserver"
-	"github.com/mholt/caddy/caddyhttp/staticfiles"
+	"github.com/caddyserver/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy/caddyhttp/staticfiles"
 )
 
 func TestTemplates(t *testing.T) {
@@ -70,6 +71,7 @@ func TestTemplates(t *testing.T) {
 		req      string
 		respCode int
 		res      string
+		bypass   bool
 	}{
 		{
 			tpl:      tmpl,
@@ -113,6 +115,7 @@ func TestTemplates(t *testing.T) {
 			respCode: http.StatusOK,
 			res: `<!DOCTYPE html><html><head><title>as it is</title></head><body>{{.Include "header.html"}}</body></html>
 `,
+			bypass: true,
 		},
 	} {
 		c := c
@@ -125,7 +128,9 @@ func TestTemplates(t *testing.T) {
 
 			rec := httptest.NewRecorder()
 
-			c.tpl.ServeHTTP(rec, req)
+			if _, err := c.tpl.ServeHTTP(rec, req); err != nil {
+				log.Println("[ERROR] failed to serve HTTP: ", err)
+			}
 
 			if rec.Code != c.respCode {
 				t.Fatalf("Test: Wrong response code: %d, should be %d", rec.Code, c.respCode)
@@ -134,6 +139,14 @@ func TestTemplates(t *testing.T) {
 			respBody := rec.Body.String()
 			if respBody != c.res {
 				t.Fatalf("Test: the expected body %v is different from the response one: %v", c.res, respBody)
+			}
+
+			if !c.bypass {
+				eTag := rec.Header().Get("ETag")
+				lastModified := rec.Header().Get("Last-Modified")
+				if eTag != "" || lastModified != "" {
+					t.Fatalf("Test: expect a response without ETag or Last-Modified, got %v %v", eTag, lastModified)
+				}
 			}
 		})
 	}
