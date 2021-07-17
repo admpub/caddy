@@ -25,7 +25,7 @@ CHANGES
 
 
 1.0.1 (July 2, 2019)
-- Move repo and module paths to github.com/caddyserver/caddy
+- Move repo and module paths to github.com/admpub/caddy
 - New third-party plugin: pubsub
 - gzip: Automatically compress .wasm files
 - tls: Clean up locks from ACME operations on soft exit

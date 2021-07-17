@@ -21,7 +21,7 @@ import (
 	"path"
 	"time"
 
-	"github.com/caddyserver/caddy"
+	"github.com/admpub/caddy"
 )
 
 func init() {

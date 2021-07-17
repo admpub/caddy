@@ -20,7 +20,7 @@ import (
 	"os/signal"
 	"sync"
 
-	"github.com/caddyserver/caddy/telemetry"
+	"github.com/admpub/caddy/telemetry"
 )
 
 // TrapSignals create signal handlers for all applicable signals for this

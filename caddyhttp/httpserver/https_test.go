@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	"gitee.com/admpub/certmagic"
-	"github.com/caddyserver/caddy/caddytls"
+	"github.com/admpub/caddy/caddytls"
 )
 
 func TestRedirPlaintextHost(t *testing.T) {

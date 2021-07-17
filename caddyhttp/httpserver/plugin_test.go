@@ -22,8 +22,8 @@ import (
 
 	"fmt"
 
-	"github.com/caddyserver/caddy"
-	"github.com/caddyserver/caddy/caddyfile"
+	"github.com/admpub/caddy"
+	"github.com/admpub/caddy/caddyfile"
 )
 
 func TestStandardizeAddress(t *testing.T) {

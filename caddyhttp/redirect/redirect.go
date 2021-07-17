@@ -21,7 +21,7 @@ import (
 	"html"
 	"net/http"
 
-	"github.com/caddyserver/caddy/caddyhttp/httpserver"
+	"github.com/admpub/caddy/caddyhttp/httpserver"
 )
 
 // Redirect is middleware to respond with HTTP redirects

@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"gitee.com/admpub/certmagic"
-	"github.com/caddyserver/caddy"
-	"github.com/caddyserver/caddy/telemetry"
+	"github.com/admpub/caddy"
+	"github.com/admpub/caddy/telemetry"
 )
 
 func init() {

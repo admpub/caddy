@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/caddyserver/caddy/caddyfile"
+	"github.com/admpub/caddy/caddyfile"
 	"github.com/lucas-clemente/quic-go/http3"
 )
 

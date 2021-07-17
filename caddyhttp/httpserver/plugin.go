@@ -27,12 +27,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/caddyserver/caddy"
-	"github.com/caddyserver/caddy/caddyfile"
-	"github.com/caddyserver/caddy/caddyhttp/staticfiles"
-	"github.com/caddyserver/caddy/caddytls"
-	"github.com/caddyserver/caddy/telemetry"
 	"gitee.com/admpub/certmagic"
+	"github.com/admpub/caddy"
+	"github.com/admpub/caddy/caddyfile"
+	"github.com/admpub/caddy/caddyhttp/staticfiles"
+	"github.com/admpub/caddy/caddytls"
+	"github.com/admpub/caddy/telemetry"
 )
 
 const serverType = "http"

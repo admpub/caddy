@@ -22,8 +22,8 @@ import (
 	"strconv"
 
 	"gitee.com/admpub/certmagic"
-	"github.com/caddyserver/caddy"
-	"github.com/caddyserver/caddy/caddytls"
+	"github.com/admpub/caddy"
+	"github.com/admpub/caddy/caddytls"
 )
 
 func activateHTTPS(cctx caddy.Context) error {

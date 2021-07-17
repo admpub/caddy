@@ -28,7 +28,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/caddyserver/caddy"
+	"github.com/admpub/caddy"
 )
 
 // FileServer implements a production-ready file server

@@ -26,7 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/caddyserver/caddy/caddyhttp/httpserver"
+	"github.com/admpub/caddy/caddyhttp/httpserver"
 )
 
 func TestErrors(t *testing.T) {
@@ -194,43 +194,43 @@ func TestGenericErrorPage(t *testing.T) {
 	em := ErrorHandler{
 		GenericErrorPage: genericErrorPagePath,
 		ErrorPages: map[int]string{
-			http.StatusNotFound: notFoundErrorPagePath,
-			http.StatusBadRequest:badRequestErrorJSONPath,
+			http.StatusNotFound:   notFoundErrorPagePath,
+			http.StatusBadRequest: badRequestErrorJSONPath,
 		},
 		Log: httpserver.NewTestLogger(&buf),
 	}
 
 	tests := []struct {
-		next         httpserver.Handler
-		expectedCode int
-		expectedBody string
-		expectedLog  string
-		expectedErr  error
+		next                httpserver.Handler
+		expectedCode        int
+		expectedBody        string
+		expectedLog         string
+		expectedErr         error
 		expectedContentType string
 	}{
 		{
-			next:         genErrorHandler(http.StatusNotFound, nil, ""),
-			expectedCode: 0,
-			expectedBody: notFoundErrorContent,
-			expectedLog:  "",
-			expectedErr:  nil,
+			next:                genErrorHandler(http.StatusNotFound, nil, ""),
+			expectedCode:        0,
+			expectedBody:        notFoundErrorContent,
+			expectedLog:         "",
+			expectedErr:         nil,
 			expectedContentType: "text/html; charset=utf-8",
 		},
 		{
-			next:         genErrorHandler(http.StatusBadRequest, nil, ""),
-			expectedCode: 0,
-			expectedBody: badRequestErrorJSONContent,
-			expectedLog:  "",
-			expectedErr:  nil,
+			next:                genErrorHandler(http.StatusBadRequest, nil, ""),
+			expectedCode:        0,
+			expectedBody:        badRequestErrorJSONContent,
+			expectedLog:         "",
+			expectedErr:         nil,
 			expectedContentType: "application/json",
 		},
 		{
-			next:         genErrorHandler(http.StatusInternalServerError, nil, ""),
-			expectedCode: 0,
-			expectedBody: genericErrorContent,
-			expectedLog:  "",
-			expectedErr:  nil,
-			expectedContentType:"text/html; charset=utf-8",
+			next:                genErrorHandler(http.StatusInternalServerError, nil, ""),
+			expectedCode:        0,
+			expectedBody:        genericErrorContent,
+			expectedLog:         "",
+			expectedErr:         nil,
+			expectedContentType: "text/html; charset=utf-8",
 		},
 	}
 
@@ -257,7 +257,7 @@ func TestGenericErrorPage(t *testing.T) {
 			t.Errorf("Test %d: Expected body %q, but got %q",
 				i, test.expectedBody, body)
 		}
-		if contentType := rec.Header().Get("Content-Type"); contentType != test.expectedContentType{
+		if contentType := rec.Header().Get("Content-Type"); contentType != test.expectedContentType {
 			t.Errorf("Test %d: Expected Content-Type %s, but got %s",
 				i, test.expectedContentType, contentType)
 		}

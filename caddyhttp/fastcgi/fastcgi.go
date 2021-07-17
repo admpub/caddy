@@ -35,9 +35,9 @@ import (
 
 	"crypto/tls"
 
-	"github.com/caddyserver/caddy"
-	"github.com/caddyserver/caddy/caddyhttp/httpserver"
-	"github.com/caddyserver/caddy/caddytls"
+	"github.com/admpub/caddy"
+	"github.com/admpub/caddy/caddyhttp/httpserver"
+	"github.com/admpub/caddy/caddytls"
 )
 
 // Handler is a middleware type that can handle requests as a FastCGI client.
@@ -85,7 +85,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 		// but we also want to be flexible for the script we proxy to.
 
 		fpath := r.URL.Path
-		// We trim those characters because they are served as plain text if appended after .php on Windows 
+		// We trim those characters because they are served as plain text if appended after .php on Windows
 		fpath = strings.TrimRight(fpath, " .")
 
 		if idx, ok := httpserver.IndexFile(h.FileSys, fpath, rule.IndexFiles); ok {

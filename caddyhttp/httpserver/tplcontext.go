@@ -34,7 +34,7 @@ import (
 	"os"
 
 	"gitee.com/admpub/certmagic"
-	"github.com/caddyserver/caddy/caddytls"
+	"github.com/admpub/caddy/caddytls"
 	"github.com/russross/blackfriday"
 )
 

@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"gitee.com/admpub/certmagic"
-	"github.com/caddyserver/caddy/telemetry"
+	"github.com/admpub/caddy/telemetry"
 )
 
 // configGroup is a type that keys configs by their hostname

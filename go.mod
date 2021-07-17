@@ -1,4 +1,4 @@
-module github.com/caddyserver/caddy
+module github.com/admpub/caddy
 
 go 1.13
 
@@ -18,7 +18,6 @@ require (
 	github.com/naoina/toml v0.1.1
 	github.com/russross/blackfriday v1.6.0
 	golang.org/x/net v0.0.0-20210716203947-853a461950ff
-	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c // indirect
 	golang.org/x/tools v0.1.5 // indirect
 	gopkg.in/mcuadros/go-syslog.v2 v2.3.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
