@@ -33,8 +33,8 @@ import (
 
 	"os"
 
+	"gitee.com/admpub/certmagic"
 	"github.com/caddyserver/caddy/caddytls"
-	"github.com/mholt/certmagic"
 	"github.com/russross/blackfriday"
 )
 

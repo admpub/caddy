@@ -21,9 +21,9 @@ import (
 	"net/http"
 	"strconv"
 
+	"gitee.com/admpub/certmagic"
 	"github.com/caddyserver/caddy"
 	"github.com/caddyserver/caddy/caddytls"
-	"github.com/mholt/certmagic"
 )
 
 func activateHTTPS(cctx caddy.Context) error {

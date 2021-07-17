@@ -32,7 +32,7 @@ import (
 	"github.com/caddyserver/caddy/caddyhttp/staticfiles"
 	"github.com/caddyserver/caddy/caddytls"
 	"github.com/caddyserver/caddy/telemetry"
-	"github.com/mholt/certmagic"
+	"gitee.com/admpub/certmagic"
 )
 
 const serverType = "http"

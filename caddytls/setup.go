@@ -29,9 +29,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gitee.com/admpub/certmagic"
 	"github.com/caddyserver/caddy"
 	"github.com/caddyserver/caddy/telemetry"
-	"github.com/mholt/certmagic"
 )
 
 func init() {

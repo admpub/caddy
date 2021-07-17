@@ -21,9 +21,9 @@ import (
 	"os"
 	"testing"
 
+	"gitee.com/admpub/certmagic"
 	"github.com/caddyserver/caddy"
 	"github.com/go-acme/lego/v3/certcrypto"
-	"github.com/mholt/certmagic"
 )
 
 func TestMain(m *testing.M) {

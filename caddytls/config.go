@@ -21,11 +21,11 @@ import (
 	"io/ioutil"
 	"time"
 
+	"gitee.com/admpub/certmagic"
 	"github.com/caddyserver/caddy"
 	"github.com/go-acme/lego/v3/certcrypto"
 	"github.com/go-acme/lego/v3/challenge/tlsalpn01"
 	"github.com/klauspost/cpuid"
-	"github.com/mholt/certmagic"
 )
 
 // Config describes how TLS should be configured and used.
