@@ -23,7 +23,7 @@ import (
 
 	"gitee.com/admpub/certmagic"
 	"github.com/admpub/caddy"
-	"github.com/go-acme/lego/v3/certcrypto"
+	"github.com/go-acme/lego/v4/certcrypto"
 )
 
 func TestMain(m *testing.M) {
