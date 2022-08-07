@@ -36,6 +36,7 @@ import (
 	"github.com/admpub/caddy/caddyhttp/staticfiles"
 	"github.com/admpub/caddy/caddytls"
 	"github.com/admpub/caddy/telemetry"
+	"github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/http3"
 )
 
@@ -113,8 +114,15 @@ func NewServer(addr string, group []*SiteConfig) (*Server, error) {
 				Addr:      addr,
 				Port:      postN,
 				TLSConfig: s.Server.TLSConfig,
-				//QuicConfig: ,
-				Handler: s.Server.Handler,
+				QuicConfig: &quic.Config{
+					//HandshakeIdleTimeout:,
+					MaxIdleTimeout: s.Server.IdleTimeout,
+				},
+				Handler:        s.Server.Handler,
+				MaxHeaderBytes: s.Server.MaxHeaderBytes,
+				//AdditionalSettings:map[uint64]uint64{},
+				//StreamHijacker:    func(http3.FrameType, quic.Connection, quic.Stream, error) (hijacked bool, err error) { return },
+				//UniStreamHijacker: func(http3.StreamType, quic.Connection, quic.ReceiveStream, error) (hijacked bool) { return },
 			}
 		}
 
