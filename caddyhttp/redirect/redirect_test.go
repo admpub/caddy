@@ -108,7 +108,14 @@ func TestRedirect(t *testing.T) {
 func TestParametersRedirect(t *testing.T) {
 	re := Redirect{
 		Rules: []Rule{
-			{FromScheme: func() string { return "http" }, FromPath: "/", Meta: false, To: "http://example.com{uri}", RequestMatcher: httpserver.IfMatcher{}},
+			{
+				FromScheme:     func() string { return "http" },
+				FromPath:       "/",
+				Meta:           false,
+				To:             "http://example.com{uri}",
+				RequestMatcher: httpserver.IfMatcher{},
+				Code:           http.StatusFound,
+			},
 		},
 	}
 

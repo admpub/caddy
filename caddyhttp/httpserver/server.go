@@ -28,6 +28,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,8 +105,17 @@ func NewServer(addr string, group []*SiteConfig) (*Server, error) {
 	if s.Server.TLSConfig != nil {
 		// enable QUIC if desired (requires HTTP/2)
 		if HTTP2 && QUIC {
-			s.quicServer = &http3.Server{Server: s.Server}
 			s.Server.Handler = s.wrapWithSvcHeaders(s.Server.Handler)
+			//s.quicServer = &http3.Server{Server: s.Server}
+			addr, port, _ := net.SplitHostPort(s.Server.Addr)
+			postN, _ := strconv.Atoi(port)
+			s.quicServer = &http3.Server{
+				Addr:      addr,
+				Port:      postN,
+				TLSConfig: s.Server.TLSConfig,
+				//QuicConfig: ,
+				Handler: s.Server.Handler,
+			}
 		}
 
 		// wrap the HTTP handler with a handler that does MITM detection
