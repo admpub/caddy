@@ -41,7 +41,7 @@ import (
 
 	"github.com/admpub/caddy/caddyfile"
 	"github.com/admpub/caddy/caddyhttp/httpserver"
-	"github.com/lucas-clemente/quic-go/http3"
+	"github.com/quic-go/quic-go/http3"
 
 	"golang.org/x/net/websocket"
 )
