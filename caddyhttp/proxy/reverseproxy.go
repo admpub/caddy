@@ -70,6 +70,12 @@ func pooledIoCopy(dst io.Writer, src io.Reader) {
 	// Due to that we extend buf's length to its capacity here and
 	// ensure it's always non-zero.
 	bufCap := cap(buf)
+
+	// [admpub|+]
+	if bufCap == 0 {
+		return
+	}
+
 	if _, err := io.CopyBuffer(dst, src, buf[0:bufCap:bufCap]); err != nil {
 		log.Println("[ERROR] failed to copy buffer: ", err)
 	}
@@ -111,13 +117,18 @@ type ReverseProxy struct {
 // What we need is just the path, so if "unix:/var/run/www.socket"
 // was the proxy directive, the parsed hostName would be
 // "unix:///var/run/www.socket", hence the ambiguous trimming.
-func socketDial(hostName string, timeout time.Duration) func(network, addr string) (conn net.Conn, err error) {
-	return func(network, addr string) (conn net.Conn, err error) {
-		return net.DialTimeout("unix", hostName[len("unix://"):], timeout)
+func socketDial(hostName string, timeout time.Duration) func(ctx context.Context, network, addr string) (conn net.Conn, err error) {
+	return func(ctx context.Context, network, addr string) (conn net.Conn, err error) {
+		return dialContextTimeout(ctx, "unix", hostName[len("unix://"):], timeout)
 	}
 }
 
-func (rp *ReverseProxy) srvDialerFunc(locator string, timeout time.Duration) func(network, addr string) (conn net.Conn, err error) {
+func dialContextTimeout(ctx context.Context, network, addr string, timeout time.Duration) (conn net.Conn, err error) {
+	d := net.Dialer{Timeout: timeout}
+	return d.DialContext(ctx, network, addr)
+}
+
+func (rp *ReverseProxy) srvDialerFunc(locator string, timeout time.Duration) func(ctx context.Context, network, addr string) (conn net.Conn, err error) {
 	service := locator
 	if strings.HasPrefix(locator, "srv://") {
 		service = locator[6:]
@@ -125,12 +136,12 @@ func (rp *ReverseProxy) srvDialerFunc(locator string, timeout time.Duration) fun
 		service = locator[12:]
 	}
 
-	return func(network, addr string) (conn net.Conn, err error) {
-		_, addrs, err := rp.srvResolver.LookupSRV(context.Background(), "", "", service)
+	return func(ctx context.Context, network, addr string) (conn net.Conn, err error) {
+		_, addrs, err := rp.srvResolver.LookupSRV(ctx, "", "", service)
 		if err != nil {
 			return nil, err
 		}
-		return net.DialTimeout("tcp", fmt.Sprintf("%s:%d", addrs[0].Target, addrs[0].Port), timeout)
+		return dialContextTimeout(ctx, "tcp", fmt.Sprintf("%s:%d", addrs[0].Target, addrs[0].Port), timeout)
 	}
 }
 
@@ -251,7 +262,7 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, t
 
 	if target.Scheme == "unix" {
 		rp.Transport = &http.Transport{
-			Dial: socketDial(target.String(), timeout),
+			DialContext: socketDial(target.String(), timeout),
 		}
 	} else if target.Scheme == "quic" {
 		rp.Transport = &http3.RoundTripper{
@@ -261,14 +272,14 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, t
 			},
 		}
 	} else if keepalive != http.DefaultMaxIdleConnsPerHost || strings.HasPrefix(target.Scheme, "srv") {
-		dialFunc := rp.dialer.Dial
+		dialFunc := rp.dialer.DialContext
 		if strings.HasPrefix(target.Scheme, "srv") {
 			dialFunc = rp.srvDialerFunc(target.String(), timeout)
 		}
 
 		transport := &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
-			Dial:                  dialFunc,
+			DialContext:           dialFunc,
 			TLSHandshakeTimeout:   defaultCryptoHandshakeTimeout,
 			ExpectContinueTimeout: 1 * time.Second,
 		}
@@ -285,8 +296,8 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, t
 		rp.Transport = transport
 	} else {
 		transport := &http.Transport{
-			Proxy: http.ProxyFromEnvironment,
-			Dial:  rp.dialer.Dial,
+			Proxy:       http.ProxyFromEnvironment,
+			DialContext: rp.dialer.DialContext,
 		}
 		if httpserver.HTTP2 {
 			if err := http2.ConfigureTransport(transport); err != nil {
@@ -399,7 +410,7 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 		defer res.Body.Close()
 		hj, ok := rw.(http.Hijacker)
 		if !ok {
-			panic(httpserver.NonHijackerError{Underlying: rw})
+			return httpserver.NonHijackerError{Underlying: rw}
 		}
 
 		conn, brw, err := hj.Hijack()
@@ -634,8 +645,8 @@ func newConnHijackerTransport(base http.RoundTripper) *connHijackerTransport {
 		t.Proxy = b.Proxy
 		t.TLSClientConfig = tlsClientConfig
 		t.TLSHandshakeTimeout = b.TLSHandshakeTimeout
-		t.Dial = b.Dial
-		t.DialTLS = b.DialTLS
+		t.DialContext = b.DialContext
+		t.DialTLSContext = b.DialTLSContext
 	} else {
 		t.Proxy = http.ProxyFromEnvironment
 		t.TLSHandshakeTimeout = 10 * time.Second
@@ -644,34 +655,33 @@ func newConnHijackerTransport(base http.RoundTripper) *connHijackerTransport {
 
 	dial := getTransportDial(t)
 	dialTLS := getTransportDialTLS(t)
-	t.Dial = func(network, addr string) (net.Conn, error) {
-		c, err := dial(network, addr)
+	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := dial(ctx, network, addr)
 		hj.Conn = c
 		return &hijackedConn{c, hj}, err
 	}
-	t.DialTLS = func(network, addr string) (net.Conn, error) {
-		c, err := dialTLS(network, addr)
+	t.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		c, err := dialTLS(ctx, network, addr)
 		hj.Conn = c
 		return &hijackedConn{c, hj}, err
 	}
-
 	return hj
 }
 
 // getTransportDial always returns a plain Dialer
-// and defaults to the existing t.Dial.
-func getTransportDial(t *http.Transport) func(network, addr string) (net.Conn, error) {
-	if t.Dial != nil {
-		return t.Dial
+// and defaults to the existing t.DialContext.
+func getTransportDial(t *http.Transport) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if t.DialContext != nil {
+		return t.DialContext
 	}
-	return defaultDialer.Dial
+	return defaultDialer.DialContext
 }
 
 // getTransportDial always returns a TLS Dialer
 // and defaults to the existing t.DialTLS.
-func getTransportDialTLS(t *http.Transport) func(network, addr string) (net.Conn, error) {
-	if t.DialTLS != nil {
-		return t.DialTLS
+func getTransportDialTLS(t *http.Transport) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if t.DialTLSContext != nil {
+		return t.DialTLSContext
 	}
 
 	// newConnHijackerTransport will modify t.Dial after calling this method
@@ -681,8 +691,8 @@ func getTransportDialTLS(t *http.Transport) func(network, addr string) (net.Conn
 	// The following DialTLS implementation stems from the Go stdlib and
 	// is identical to what happens if DialTLS is not provided.
 	// Source: https://github.com/golang/go/blob/230a376b5a67f0e9341e1fa47e670ff762213c83/src/net/http/transport.go#L1018-L1051
-	return func(network, addr string) (net.Conn, error) {
-		plainConn, err := plainDial(network, addr)
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		plainConn, err := plainDial(ctx, network, addr)
 		if err != nil {
 			return nil, err
 		}
