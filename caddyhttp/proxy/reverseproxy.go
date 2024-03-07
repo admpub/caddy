@@ -652,7 +652,7 @@ func newConnHijackerTransport(base http.RoundTripper) *connHijackerTransport {
 		t.Proxy = http.ProxyFromEnvironment
 		t.TLSHandshakeTimeout = 10 * time.Second
 	}
-	hj := &connHijackerTransport{t, nil, bufferPool.Get().([]byte)[:0]}
+	hj := &connHijackerTransport{t, nil, (*bufferPool.Get().(*[]byte))[:0]}
 
 	dial := getTransportDial(t)
 	dialTLS := getTransportDialTLS(t)
