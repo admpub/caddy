@@ -63,7 +63,7 @@ func createBuffer() interface{} {
 	return &b
 }
 
-func pooledIoCopy(dst io.Writer, src io.Reader) {
+func pooledIoCopy(dst io.Writer, src io.Reader, tag string) {
 	buf := bufferPool.Get().(*[]byte)
 	defer bufferPool.Put(buf)
 
@@ -78,7 +78,7 @@ func pooledIoCopy(dst io.Writer, src io.Reader) {
 	}
 
 	if _, err := io.CopyBuffer(dst, src, (*buf)[0:bufCap:bufCap]); err != nil {
-		log.Println("[ERROR] failed to copy buffer: ", err)
+		log.Println("["+tag+"][ERROR] failed to copy buffer: ", err)
 	}
 }
 
@@ -442,7 +442,7 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 
 		// Proxy backend -> frontend.
 		go func() {
-			pooledIoCopy(conn, backendConn)
+			pooledIoCopy(conn, backendConn, `Proxy: backend -> frontend`)
 			proxyDone <- struct{}{}
 		}()
 
@@ -462,7 +462,7 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 			}
 		}
 		go func() {
-			pooledIoCopy(backendConn, conn)
+			pooledIoCopy(backendConn, conn, `Proxy: frontend -> backend`)
 			proxyDone <- struct{}{}
 		}()
 
@@ -542,7 +542,7 @@ func (rp *ReverseProxy) copyResponse(dst io.Writer, src io.Reader) {
 			dst = mlw
 		}
 	}
-	pooledIoCopy(dst, src)
+	pooledIoCopy(dst, src, `Proxy: copyResponse`)
 }
 
 // skip these headers if they already exist.
