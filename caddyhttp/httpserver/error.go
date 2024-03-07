@@ -21,7 +21,6 @@ import (
 var (
 	_ error = NonHijackerError{}
 	_ error = NonFlusherError{}
-	_ error = NonCloseNotifierError{}
 	_ error = NonPusherError{}
 )
 
@@ -45,17 +44,6 @@ type NonFlusherError struct {
 // Implement Error
 func (f NonFlusherError) Error() string {
 	return fmt.Sprintf("%T is not a flusher", f.Underlying)
-}
-
-// NonCloseNotifierError is more descriptive error caused by a non closeNotifier
-type NonCloseNotifierError struct {
-	// underlying type which doesn't implement CloseNotify
-	Underlying interface{}
-}
-
-// Implement Error
-func (c NonCloseNotifierError) Error() string {
-	return fmt.Sprintf("%T is not a closeNotifier", c.Underlying)
 }
 
 // NonPusherError is more descriptive error caused by a non pusher

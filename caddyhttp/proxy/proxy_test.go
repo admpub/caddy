@@ -1430,7 +1430,7 @@ func TestCancelRequest(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Error("Handler never saw CloseNotify")
 			return
-		case <-w.(http.CloseNotifier).CloseNotify():
+		case <-r.Context().Done():
 		}
 
 		w.WriteHeader(http.StatusOK)
