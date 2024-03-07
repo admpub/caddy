@@ -17,6 +17,7 @@ package gzip
 import (
 	"compress/gzip"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"strconv"
 	"strings"
@@ -149,7 +150,7 @@ func initWriterPool() {
 	newWriterPool := func(level int) *sync.Pool {
 		return &sync.Pool{
 			New: func() interface{} {
-				w, _ := gzip.NewWriterLevel(ioutil.Discard, level)
+				w, _ := gzip.NewWriterLevel(io.Discard, level)
 				return w
 			},
 		}

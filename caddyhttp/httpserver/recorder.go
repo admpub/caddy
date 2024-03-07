@@ -215,8 +215,8 @@ func (rb *ResponseBuffer) ReadFrom(src io.Reader) (int64, error) {
 		// but results fluctuated a little on each run).
 		// a note of caution:
 		// https://go-review.googlesource.com/c/22134#message-ff351762308fe05f6b72a487d6842e3988916486
-		buf := respBufPool.Get().([]byte)
-		n, err := io.CopyBuffer(rb.ResponseWriterWrapper, src, buf)
+		buf := respBufPool.Get().(*[]byte)
+		n, err := io.CopyBuffer(rb.ResponseWriterWrapper, src, *buf)
 		respBufPool.Put(buf) // deferring this slowed down benchmarks a smidgin, I think
 		return n, err
 	}
@@ -249,7 +249,8 @@ func (fscw forcedStatusCodeWriter) WriteHeader(int) {
 // is configured to stream a response.
 var respBufPool = &sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 32*1024)
+		b := make([]byte, 32*1024)
+		return &b
 	},
 }
 
