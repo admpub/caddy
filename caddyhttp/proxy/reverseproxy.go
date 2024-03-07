@@ -63,7 +63,7 @@ func createBuffer() interface{} {
 	return &b
 }
 
-func pooledIoCopy(dst io.Writer, src io.Reader, tag string) {
+func pooledIoCopy(dst io.Writer, src io.Reader) error {
 	buf := bufferPool.Get().(*[]byte)
 	defer bufferPool.Put(buf)
 
@@ -74,12 +74,13 @@ func pooledIoCopy(dst io.Writer, src io.Reader, tag string) {
 
 	// [admpub|+]
 	if bufCap == 0 {
-		return
+		return nil
 	}
 
 	if _, err := io.CopyBuffer(dst, src, (*buf)[0:bufCap:bufCap]); err != nil {
-		log.Println("["+tag+"][ERROR] failed to copy buffer: ", err)
+		return fmt.Errorf("[ERROR] failed to copy buffer: %v", err)
 	}
+	return nil
 }
 
 // onExitFlushLoop is a callback set by tests to detect the state of the
@@ -442,7 +443,7 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 
 		// Proxy backend -> frontend.
 		go func() {
-			pooledIoCopy(conn, backendConn, `Proxy: backend -> frontend`)
+			_ = pooledIoCopy(conn, backendConn)
 			proxyDone <- struct{}{}
 		}()
 
@@ -462,7 +463,7 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 			}
 		}
 		go func() {
-			pooledIoCopy(backendConn, conn, `Proxy: frontend -> backend`)
+			_ = pooledIoCopy(backendConn, conn)
 			proxyDone <- struct{}{}
 		}()
 
@@ -542,7 +543,9 @@ func (rp *ReverseProxy) copyResponse(dst io.Writer, src io.Reader) {
 			dst = mlw
 		}
 	}
-	pooledIoCopy(dst, src, `Proxy: copyResponse`)
+	if err := pooledIoCopy(dst, src); err != nil {
+		log.Println("[Proxy: copyResponse]", err)
+	}
 }
 
 // skip these headers if they already exist.
