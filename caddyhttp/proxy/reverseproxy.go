@@ -41,6 +41,7 @@ import (
 
 	"golang.org/x/net/http2"
 
+	"github.com/admpub/caddy/caddyconst"
 	"github.com/admpub/caddy/caddyhttp/httpserver"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -168,16 +169,16 @@ func singleJoiningSlash(a, b string) string {
 func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, timeout, fallbackDelay time.Duration) *ReverseProxy {
 	targetQuery := target.RawQuery
 	director := func(req *http.Request) {
-		if target.Scheme == "unix" {
+		if target.Scheme == caddyconst.SchemeUnix {
 			// to make Dial work with unix URL,
 			// scheme and host have to be faked
-			req.URL.Scheme = "http"
+			req.URL.Scheme = caddyconst.SchemeHTTP
 			req.URL.Host = "socket"
-		} else if target.Scheme == "srv" {
-			req.URL.Scheme = "http"
+		} else if target.Scheme == caddyconst.SchemeSrv {
+			req.URL.Scheme = caddyconst.SchemeHTTP
 			req.URL.Host = target.Host
-		} else if target.Scheme == "srv+https" {
-			req.URL.Scheme = "https"
+		} else if target.Scheme == caddyconst.SchemeSrvAndHTTPS {
+			req.URL.Scheme = caddyconst.SchemeHTTPS
 			req.URL.Host = target.Host
 		} else {
 			req.URL.Scheme = target.Scheme
@@ -228,7 +229,7 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, t
 		// Calling /test on a server that proxies requests to
 		// unix:/var/run/www.socket will thus set the requested path
 		// to /var/run/www.socket/test, rendering paths useless.
-		if target.Scheme == "unix" {
+		if target.Scheme == caddyconst.SchemeUnix {
 			// See comment on socketDial for the trim
 			socketPrefix := target.String()[len("unix://"):]
 			req.URL.Path = strings.TrimPrefix(req.URL.Path, socketPrefix)
@@ -262,20 +263,20 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, t
 		dialer:        &dialer,
 	}
 
-	if target.Scheme == "unix" {
+	if target.Scheme == caddyconst.SchemeUnix {
 		rp.Transport = &http.Transport{
 			DialContext: socketDial(target.String(), timeout),
 		}
-	} else if target.Scheme == "quic" {
+	} else if target.Scheme == caddyconst.SchemeQUIC {
 		rp.Transport = &http3.RoundTripper{
-			QuicConfig: &quic.Config{
+			QUICConfig: &quic.Config{
 				HandshakeIdleTimeout: defaultCryptoHandshakeTimeout,
 				KeepAlivePeriod:      defaultCryptoHandshakeTimeout,
 			},
 		}
-	} else if keepalive != http.DefaultMaxIdleConnsPerHost || strings.HasPrefix(target.Scheme, "srv") {
+	} else if keepalive != http.DefaultMaxIdleConnsPerHost || strings.HasPrefix(target.Scheme, caddyconst.SchemeSrv) {
 		dialFunc := rp.dialer.DialContext
-		if strings.HasPrefix(target.Scheme, "srv") {
+		if strings.HasPrefix(target.Scheme, caddyconst.SchemeSrv) {
 			dialFunc = rp.srvDialerFunc(target.String(), timeout)
 		}
 
@@ -379,8 +380,8 @@ func (rp *ReverseProxy) ServeHTTP(rw http.ResponseWriter, outreq *http.Request, 
 
 	rp.Director(outreq)
 
-	if outreq.URL.Scheme == "quic" {
-		outreq.URL.Scheme = "https" // Change scheme back to https for QUIC RoundTripper
+	if outreq.URL.Scheme == caddyconst.SchemeQUIC {
+		outreq.URL.Scheme = caddyconst.SchemeHTTPS // Change scheme back to https for QUIC RoundTripper
 	}
 
 	res, err := transport.RoundTrip(outreq)

@@ -108,13 +108,19 @@ func NewServer(addr string, group []*SiteConfig) (*Server, error) {
 		if HTTP2 && QUIC {
 			s.Server.Handler = s.wrapWithSvcHeaders(s.Server.Handler)
 			//s.quicServer = &http3.Server{Server: s.Server}
-			addr, port, _ := net.SplitHostPort(s.Server.Addr)
-			postN, _ := strconv.Atoi(port)
+			addr, port, err := net.SplitHostPort(s.Server.Addr)
+			if err != nil {
+				return nil, fmt.Errorf(`failed to parse server address %q: %w`, s.Server.Addr, err)
+			}
+			portN, err := strconv.Atoi(port)
+			if err != nil {
+				return nil, fmt.Errorf(`failed to parse port %q: %w`, port, err)
+			}
 			s.quicServer = &http3.Server{
 				Addr:      addr,
-				Port:      postN,
+				Port:      portN,
 				TLSConfig: s.Server.TLSConfig,
-				QuicConfig: &quic.Config{
+				QUICConfig: &quic.Config{
 					//HandshakeIdleTimeout:,
 					MaxIdleTimeout: s.Server.IdleTimeout,
 				},
@@ -252,7 +258,7 @@ func makeHTTPServerWithTimeouts(addr string, group []*SiteConfig) *http.Server {
 
 func (s *Server) wrapWithSvcHeaders(previousHandler http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := s.quicServer.SetQuicHeaders(w.Header()); err != nil {
+		if err := s.quicServer.SetQUICHeaders(w.Header()); err != nil {
 			log.Println("[Error] failed to set proper headers for QUIC: ", err)
 		}
 		previousHandler.ServeHTTP(w, r)
