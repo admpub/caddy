@@ -1,6 +1,8 @@
 module github.com/admpub/caddy
 
-go 1.22
+go 1.22.0
+
+toolchain go1.23.5
 
 require (
 	gitee.com/admpub/certmagic v0.8.8
