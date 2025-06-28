@@ -113,7 +113,7 @@ func TestReverseProxyWithOwnCACertificates(t *testing.T) {
 		if transport.TLSClientConfig.RootCAs == nil {
 			t.Errorf("RootCAs not set on TLSClientConfig.")
 		}
-	} else if transport, ok := ups.ReverseProxy.Transport.(*http3.RoundTripper); ok {
+	} else if transport, ok := ups.ReverseProxy.Transport.(*http3.Transport); ok {
 		if transport.TLSClientConfig.RootCAs == nil {
 			t.Errorf("RootCAs not set on TLSClientConfig.")
 		}

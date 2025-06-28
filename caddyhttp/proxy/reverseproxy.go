@@ -268,7 +268,7 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, t
 			DialContext: socketDial(target.String(), timeout),
 		}
 	} else if target.Scheme == caddyconst.SchemeQUIC {
-		rp.Transport = &http3.RoundTripper{
+		rp.Transport = &http3.Transport{
 			QUICConfig: &quic.Config{
 				HandshakeIdleTimeout: defaultCryptoHandshakeTimeout,
 				KeepAlivePeriod:      defaultCryptoHandshakeTimeout,
@@ -324,7 +324,7 @@ func (rp *ReverseProxy) UseInsecureTransport() {
 		// No http2.ConfigureTransport() here.
 		// For now this is only added in places where
 		// an http.Transport is actually created.
-	} else if transport, ok := rp.Transport.(*http3.RoundTripper); ok {
+	} else if transport, ok := rp.Transport.(*http3.Transport); ok {
 		if transport.TLSClientConfig == nil {
 			transport.TLSClientConfig = &tls.Config{}
 		}
@@ -343,7 +343,7 @@ func (rp *ReverseProxy) UseOwnCACertificates(CaCertPool *x509.CertPool) {
 		// No http2.ConfigureTransport() here.
 		// For now this is only added in places where
 		// an http.Transport is actually created.
-	} else if transport, ok := rp.Transport.(*http3.RoundTripper); ok {
+	} else if transport, ok := rp.Transport.(*http3.Transport); ok {
 		if transport.TLSClientConfig == nil {
 			transport.TLSClientConfig = &tls.Config{}
 		}
@@ -362,7 +362,7 @@ func (rp *ReverseProxy) UseClientCertificates(keyPair *tls.Certificate) {
 		// No http2.ConfigureTransport() here.
 		// For now this is only added in places where
 		// an http.Transport is actually created.
-	} else if transport, ok := rp.Transport.(*http3.RoundTripper); ok {
+	} else if transport, ok := rp.Transport.(*http3.Transport); ok {
 		if transport.TLSClientConfig == nil {
 			transport.TLSClientConfig = &tls.Config{}
 		}

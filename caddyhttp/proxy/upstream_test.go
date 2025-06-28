@@ -673,7 +673,7 @@ func TestQuicHost(t *testing.T) {
 				continue
 			}
 			for _, host := range staticUpstream.Hosts {
-				_, ok := host.ReverseProxy.Transport.(*http3.RoundTripper)
+				_, ok := host.ReverseProxy.Transport.(*http3.Transport)
 				if !ok {
 					t.Errorf("Type mismatch: %#v", host.ReverseProxy.Transport)
 					continue
