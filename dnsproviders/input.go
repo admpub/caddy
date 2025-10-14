@@ -65,7 +65,7 @@ func (i Input) BuildAttrs() string {
 	return attrs
 }
 
-func (i Input) RenderInput() string {
+func (i Input) RenderInput(namePrefix string) string {
 	value := i.Value
 	if len(value) == 0 && len(i.Default) > 0 {
 		value = i.Default
@@ -80,13 +80,13 @@ func (i Input) RenderInput() string {
 			}
 			options += `>` + option.Text + `</option>`
 		}
-		return `<select class="form-control" name="` + i.Name + `"` + i.BuildAttrs() + `>` + options + `</select>`
+		return `<select class="form-control" name="` + namePrefix + i.Name + `"` + i.BuildAttrs() + `>` + options + `</select>`
 	case `textarea`:
-		return `<textarea class="form-control" name="` + i.Name + `"` + i.BuildAttrs() + `>` + value + `</textarea>`
+		return `<textarea class="form-control" name="` + namePrefix + i.Name + `"` + i.BuildAttrs() + `>` + value + `</textarea>`
 	case `checkbox`:
 		var options string
 		for _, option := range i.Options {
-			options += `<label><input type="checkbox" name="` + i.Name + `[]" value="` + option.Value + `"`
+			options += `<label><input type="checkbox" name="` + namePrefix + i.Name + `[]" value="` + option.Value + `"`
 			if option.Checked || option.Value == value {
 				options += ` checked`
 			}
@@ -96,7 +96,7 @@ func (i Input) RenderInput() string {
 	case `radio`:
 		var options string
 		for _, option := range i.Options {
-			options += `<label><input type="radio" name="` + i.Name + `" value="` + option.Value + `"`
+			options += `<label><input type="radio" name="` + namePrefix + i.Name + `" value="` + option.Value + `"`
 			if option.Checked || option.Value == value {
 				options += ` checked`
 			}
@@ -104,7 +104,7 @@ func (i Input) RenderInput() string {
 		}
 		return options
 	default:
-		return `<input class="form-control" type="` + i.Type + `" name="` + i.Name + `" value="` + value + `"` + i.BuildAttrs() + ` />`
+		return `<input class="form-control" type="` + i.Type + `" name="` + namePrefix + i.Name + `" value="` + value + `"` + i.BuildAttrs() + ` />`
 	}
 }
 
