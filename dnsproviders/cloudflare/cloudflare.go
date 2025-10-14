@@ -17,7 +17,7 @@ const tokenErr = "cloudflare: email and API tokens are no longer supported in Ca
 
 func init() {
 	caddytls.RegisterDNSProvider("cloudflare", NewDNSProvider)
-	dnsproviders.RegisterInputs("cloudflare", inputs)
+	dnsproviders.RegisterInputs("cloudflare", `Cloudflare`, inputs)
 }
 
 var inputs = []dnsproviders.Input{

@@ -132,10 +132,16 @@ func (i Inputs) Clone() Inputs {
 	return results
 }
 
-var inputsRegistry = map[string]Inputs{}
+type Provider struct {
+	Provider string
+	Title    string
+	Inputs   Inputs
+}
+
+var inputsRegistry = map[string]Provider{}
 
 func GetInputs(provider string) Inputs {
-	return inputsRegistry[provider]
+	return inputsRegistry[provider].Inputs
 }
 
 func GetProviders() []string {
@@ -147,6 +153,10 @@ func GetProviders() []string {
 	return providers
 }
 
-func RegisterInputs(provider string, inputs Inputs) {
-	inputsRegistry[provider] = inputs
+func RegisterInputs(provider string, title string, inputs Inputs) {
+	inputsRegistry[provider] = Provider{Provider: provider, Title: title, Inputs: inputs}
+}
+
+func Get(provider string) Provider {
+	return inputsRegistry[provider]
 }

@@ -19,7 +19,7 @@ const (
 
 func init() {
 	caddytls.RegisterDNSProvider("dnspod", NewDNSProvider)
-	dnsproviders.RegisterInputs("dnspod", inputs)
+	dnsproviders.RegisterInputs("dnspod", `DNSPOD`, inputs)
 }
 
 var inputs = []dnsproviders.Input{

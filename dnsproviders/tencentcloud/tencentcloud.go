@@ -22,7 +22,7 @@ const (
 
 func init() {
 	caddytls.RegisterDNSProvider("tencentcloud", NewDNSProvider)
-	dnsproviders.RegisterInputs("tencentcloud", inputs)
+	dnsproviders.RegisterInputs("tencentcloud", `腾讯云`, inputs)
 }
 
 var inputs = []dnsproviders.Input{

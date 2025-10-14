@@ -21,7 +21,7 @@ const (
 
 func init() {
 	caddytls.RegisterDNSProvider("alidns", NewDNSProvider)
-	dnsproviders.RegisterInputs("alidns", inputs)
+	dnsproviders.RegisterInputs("alidns", `阿里DNS`, inputs)
 }
 
 var inputs = []dnsproviders.Input{
