@@ -17,7 +17,6 @@ package proxy
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 )
 
 type bufferedBody struct {
@@ -43,7 +42,7 @@ func newBufferedBody(src io.ReadCloser) (*bufferedBody, error) {
 	if src == nil {
 		return nil, nil
 	}
-	b, err := ioutil.ReadAll(src)
+	b, err := io.ReadAll(src)
 	src.Close()
 	if err != nil {
 		return nil, err

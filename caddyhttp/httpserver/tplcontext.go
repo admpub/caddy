@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	mathrand "math/rand"
 	"net"
@@ -33,8 +33,8 @@ import (
 
 	"os"
 
-	"gitee.com/admpub/certmagic"
 	"github.com/admpub/caddy/caddytls"
+	"github.com/caddyserver/certmagic"
 	"github.com/russross/blackfriday"
 )
 
@@ -301,7 +301,7 @@ func ContextInclude(filename string, ctx interface{}, fs http.FileSystem) (strin
 	}
 	defer file.Close()
 
-	body, err := ioutil.ReadAll(file)
+	body, err := io.ReadAll(file)
 	if err != nil {
 		return "", err
 	}

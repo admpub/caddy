@@ -17,7 +17,7 @@ package caddytls
 import (
 	"testing"
 
-	"gitee.com/admpub/certmagic"
+	"github.com/caddyserver/certmagic"
 )
 
 type holder struct {

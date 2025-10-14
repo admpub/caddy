@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -176,7 +176,7 @@ func TestMetaRedirect(t *testing.T) {
 			log.Println("[ERROR] failed to serve HTTP: ", err)
 		}
 
-		body, err := ioutil.ReadAll(rec.Body)
+		body, err := io.ReadAll(rec.Body)
 		if err != nil {
 			t.Fatalf("Test %d: Could not read HTTP response body: %v", i, err)
 		}

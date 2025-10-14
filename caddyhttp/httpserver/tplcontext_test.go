@@ -18,7 +18,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -102,7 +102,7 @@ func TestInclude(t *testing.T) {
 		testPrefix := getTestPrefix(i)
 
 		// WriteFile truncates the content
-		err := ioutil.WriteFile(absInFilePath, []byte(test.fileContent), os.ModePerm)
+		err := os.WriteFile(absInFilePath, []byte(test.fileContent), os.ModePerm)
 		if err != nil {
 			t.Fatal(testPrefix+"Failed to create test file. Error was: %v", err)
 		}
@@ -163,7 +163,7 @@ func TestMarkdown(t *testing.T) {
 		testPrefix := getTestPrefix(i)
 
 		// WriteFile truncates the content
-		err := ioutil.WriteFile(absInFilePath, []byte(test.fileContent), os.ModePerm)
+		err := os.WriteFile(absInFilePath, []byte(test.fileContent), os.ModePerm)
 		if err != nil {
 			t.Fatal(testPrefix+"Failed to create test file. Error was: %v", err)
 		}
@@ -843,7 +843,7 @@ func TestFiles(t *testing.T) {
 
 		// Create directory / files from test case.
 		if test.fileNames != nil {
-			dirPath, err = ioutil.TempDir(fmt.Sprintf("%s", context.Root), "caddy_ctxtest")
+			dirPath, err = os.MkdirTemp(fmt.Sprintf("%s", context.Root), "caddy_ctxtest")
 			if err != nil {
 				os.RemoveAll(dirPath)
 				t.Fatalf(testPrefix+"Expected no error creating directory, got: '%s'", err.Error())
@@ -851,7 +851,7 @@ func TestFiles(t *testing.T) {
 
 			for _, name := range test.fileNames {
 				absFilePath := filepath.Join(dirPath, name)
-				if err = ioutil.WriteFile(absFilePath, []byte(""), os.ModePerm); err != nil {
+				if err = os.WriteFile(absFilePath, []byte(""), os.ModePerm); err != nil {
 					os.RemoveAll(dirPath)
 					t.Fatalf(testPrefix+"Expected no error creating file, got: '%s'", err.Error())
 				}
@@ -868,7 +868,7 @@ func TestFiles(t *testing.T) {
 				t.Errorf(testPrefix+"Could not verify error content, got: '%s'", err.Error())
 			}
 		} else if test.shouldErr {
-			t.Errorf(testPrefix + "Expected error but had none")
+			t.Error(testPrefix + "Expected error but had none")
 		} else {
 			numFiles := len(test.fileNames)
 			// reflect.DeepEqual does not consider two empty slices to be equal
@@ -913,7 +913,7 @@ func TestAddLink(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = tmpl.Execute(ioutil.Discard, ctx)
+			err = tmpl.Execute(io.Discard, ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

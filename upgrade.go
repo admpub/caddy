@@ -16,8 +16,9 @@ package caddy
 
 import (
 	"encoding/gob"
+	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -153,14 +154,14 @@ func Upgrade() error {
 	}
 
 	// determine whether child startup succeeded
-	answer, readErr := ioutil.ReadAll(sigrpipe)
+	answer, readErr := io.ReadAll(sigrpipe)
 	if len(answer) == 0 {
 		cmdErr := cmd.Wait() // get exit status
 		errStr := fmt.Sprintf("child failed to initialize: %v", cmdErr)
 		if readErr != nil {
 			errStr += fmt.Sprintf(" - additionally, error communicating with child process: %v", readErr)
 		}
-		return fmt.Errorf(errStr)
+		return errors.New(errStr)
 	}
 
 	// looks like child is successful; we can exit gracefully.

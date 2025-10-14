@@ -15,7 +15,6 @@
 package browse
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,7 +33,7 @@ func TestSetup(t *testing.T) {
 	}
 	nonExistentDirPath := filepath.Join(tempDirPath, strconv.Itoa(int(time.Now().UnixNano())))
 
-	tempTemplate, err := ioutil.TempFile(".", "tempTemplate")
+	tempTemplate, err := os.CreateTemp(".", "tempTemplate")
 	if err != nil {
 		t.Fatalf("BeforeTest: Failed to create a temporary file in the working directory! Error was: %v", err)
 	}

@@ -16,14 +16,14 @@
 //
 // To use this package:
 //
-//   1. Set the AppName and AppVersion variables.
-//   2. Call LoadCaddyfile() to get the Caddyfile.
-//      Pass in the name of the server type (like "http").
-//      Make sure the server type's package is imported
-//      (import _ "github.com/admpub/caddy/caddyhttp").
-//   3. Call caddy.Start() to start Caddy. You get back
-//      an Instance, on which you can call Restart() to
-//      restart it or Stop() to stop it.
+//  1. Set the AppName and AppVersion variables.
+//  2. Call LoadCaddyfile() to get the Caddyfile.
+//     Pass in the name of the server type (like "http").
+//     Make sure the server type's package is imported
+//     (import _ "github.com/admpub/caddy/caddyhttp").
+//  3. Call caddy.Start() to start Caddy. You get back
+//     an Instance, on which you can call Restart() to
+//     restart it or Stop() to stop it.
 //
 // You should call Wait() on your instance to wait for
 // all servers to quit before your process exits.
@@ -34,7 +34,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -444,7 +443,7 @@ func CaddyfileFromPipe(f *os.File, serverType string) (Input, error) {
 		// make one either way, which is why we also check that
 		// bitmask.
 		// NOTE: Reading from stdin after this fails (e.g. for the let's encrypt email address) (OS X)
-		confBody, err := ioutil.ReadAll(f)
+		confBody, err := io.ReadAll(f)
 		if err != nil {
 			return nil, err
 		}
@@ -1009,7 +1008,7 @@ func writePidFile() error {
 		return nil
 	}
 	pid := []byte(strconv.Itoa(os.Getpid()) + "\n")
-	return ioutil.WriteFile(PidFile, pid, 0644)
+	return os.WriteFile(PidFile, pid, 0644)
 }
 
 type restartTriple struct {

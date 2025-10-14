@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//+build linux darwin
+//go:build linux || darwin
+// +build linux darwin
 
 package httpserver
 
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -104,7 +105,7 @@ func TestLoggingToFile(t *testing.T) {
 
 	logger.Print(expectedOutput)
 
-	content, err := ioutil.ReadFile(file)
+	content, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatalf("Could not read log file content: %v", err)
 	}
@@ -208,7 +209,7 @@ func captureStdout(f func()) string {
 
 	w.Close()
 
-	written, _ := ioutil.ReadAll(r)
+	written, _ := io.ReadAll(r)
 	os.Stdout = original
 
 	return string(written)
@@ -224,7 +225,7 @@ func captureStderr(f func()) string {
 
 	w.Close()
 
-	written, _ := ioutil.ReadAll(r)
+	written, _ := io.ReadAll(r)
 	os.Stderr = original
 
 	return string(written)

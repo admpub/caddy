@@ -16,7 +16,6 @@ package root
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +37,7 @@ func TestRoot(t *testing.T) {
 
 	nonexistentDir := filepath.Join(existingDirPath, "highly_unlikely_to_exist_dir")
 
-	existingFile, err := ioutil.TempFile("", "root_test")
+	existingFile, err := os.CreateTemp("", "root_test")
 	if err != nil {
 		t.Fatalf("BeforeTest: Failed to create temp file for testing! Error was: %v", err)
 	}
@@ -120,7 +119,7 @@ func getInaccessiblePath(file string) string {
 }
 
 func TestSymlinkRoot(t *testing.T) {
-	origDir, err := ioutil.TempDir("", "root_test")
+	origDir, err := os.MkdirTemp("", "root_test")
 	if err != nil {
 		t.Fatalf("BeforeTest: Failed to create temp dir for testing! Error was: %v", err)
 	}

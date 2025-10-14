@@ -15,7 +15,6 @@
 package markdown
 
 import (
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -191,7 +190,7 @@ Welcome to title!
 }
 
 func setDefaultTemplate(filename string) *template.Template {
-	buf, err := ioutil.ReadFile(filename)
+	buf, err := os.ReadFile(filename)
 	if err != nil {
 		return nil
 	}
@@ -208,11 +207,11 @@ func TestTemplateReload(t *testing.T) {
 		template `+templateFile+`
 	}`)
 
-	err := ioutil.WriteFile(templateFile, []byte("hello {{.Doc.body}}"), 0644)
+	err := os.WriteFile(templateFile, []byte("hello {{.Doc.body}}"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ioutil.WriteFile(targetFile, []byte("caddy"), 0644)
+	err = os.WriteFile(targetFile, []byte("caddy"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +252,7 @@ func TestTemplateReload(t *testing.T) {
 	}
 
 	// update template
-	err = ioutil.WriteFile(templateFile, []byte("hi {{.Doc.body}}"), 0644)
+	err = os.WriteFile(templateFile, []byte("hi {{.Doc.body}}"), 0644)
 	if err != nil {
 		t.Fatal(err)
 	}

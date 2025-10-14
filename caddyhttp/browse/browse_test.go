@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -535,7 +534,7 @@ func TestDirSymlink(t *testing.T) {
 
 	for i, tc := range testCases {
 		func() {
-			tmpdir, err := ioutil.TempDir("", testDirPrefix)
+			tmpdir, err := os.MkdirTemp("", testDirPrefix)
 			if err != nil {
 				t.Fatalf("failed to create test directory: %v", err)
 			}

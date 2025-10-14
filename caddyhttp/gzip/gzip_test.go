@@ -17,9 +17,9 @@ package gzip
 import (
 	"compress/gzip"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -121,7 +121,7 @@ func TestGzipHandler(t *testing.T) {
 func nextFunc(shouldGzip bool) httpserver.Handler {
 	return httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
 		// write a relatively large text file
-		b, err := ioutil.ReadFile("testdata/test.txt")
+		b, err := os.ReadFile("testdata/test.txt")
 		if err != nil {
 			return 500, err
 		}

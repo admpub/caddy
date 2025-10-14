@@ -17,7 +17,6 @@ package staticfiles
 import (
 	"context"
 	"errors"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -358,7 +357,7 @@ func TestServeHTTP(t *testing.T) {
 
 // beforeServeHTTPTest creates a test directory with the structure, defined in the variable testFiles
 func beforeServeHTTPTest(t *testing.T) string {
-	tmpdir, err := ioutil.TempDir("", testDirPrefix)
+	tmpdir, err := os.MkdirTemp("", testDirPrefix)
 	if err != nil {
 		t.Fatalf("failed to create test directory: %v", err)
 	}

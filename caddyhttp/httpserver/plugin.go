@@ -27,12 +27,12 @@ import (
 	"strings"
 	"time"
 
-	"gitee.com/admpub/certmagic"
 	"github.com/admpub/caddy"
 	"github.com/admpub/caddy/caddyfile"
 	"github.com/admpub/caddy/caddyhttp/staticfiles"
 	"github.com/admpub/caddy/caddytls"
 	"github.com/admpub/caddy/telemetry"
+	"github.com/caddyserver/certmagic"
 )
 
 const serverType = "http"
@@ -192,13 +192,14 @@ func (h *httpContext) InspectServerBlocks(sourceFile string, serverBlocks []cadd
 			// Make our caddytls.Config, which has a pointer to the
 			// instance's certificate cache and enough information
 			// to use automatic HTTPS when the time comes
-			caddytlsConfig, err := caddytls.NewConfig(h.instance)
+			caddytlsConfig, err := caddytls.NewConfig(h.instance, certmagic.ACMEIssuer{
+				AltHTTPPort:    altHTTPPort,
+				AltTLSALPNPort: altTLSALPNPort,
+			})
 			if err != nil {
 				return nil, fmt.Errorf("creating new caddytls configuration: %v", err)
 			}
 			caddytlsConfig.Hostname = addr.Host
-			caddytlsConfig.Manager.AltHTTPPort = altHTTPPort
-			caddytlsConfig.Manager.AltTLSALPNPort = altTLSALPNPort
 
 			// Save the config to our master list, and key it for lookups
 			cfg := &SiteConfig{
@@ -239,7 +240,7 @@ func (h *httpContext) MakeServers() ([]caddy.Server, error) {
 	// trusted CA (obviously not a perfect heuristic)
 	var looksLikeProductionCA bool
 	for _, publicCAEndpoint := range caddytls.KnownACMECAs {
-		if strings.Contains(certmagic.Default.CA, publicCAEndpoint) {
+		if strings.Contains(certmagic.DefaultACME.CA, publicCAEndpoint) {
 			looksLikeProductionCA = true
 			break
 		}
@@ -260,7 +261,7 @@ func (h *httpContext) MakeServers() ([]caddy.Server, error) {
 			if !caddy.IsLoopback(cfg.Addr.Host) &&
 				!caddy.IsLoopback(cfg.ListenHost) &&
 				(caddytls.QualifiesForManagedTLS(cfg) ||
-					certmagic.HostQualifies(cfg.Addr.Host)) {
+					certmagic.SubjectQualifiesForPublicCert(cfg.Addr.Host)) {
 				atLeastOneSiteLooksLikeProduction = true
 			}
 		}
@@ -326,7 +327,8 @@ func (h *httpContext) MakeServers() ([]caddy.Server, error) {
 }
 
 // normalizedKey returns "normalized" key representation:
-//  scheme and host names are lowered, everything else stays the same
+//
+//	scheme and host names are lowered, everything else stays the same
 func normalizedKey(key string) string {
 	addr, err := standardizeAddress(key)
 	if err != nil {
@@ -347,9 +349,13 @@ func GetConfig(c *caddy.Controller) *SiteConfig {
 	// we should only get here during tests because directive
 	// actions typically skip the server blocks where we make
 	// the configs
+	magic := certmagic.NewDefault()
+	issuer := certmagic.NewACMEIssuer(magic, certmagic.ACMEIssuer{})
+	magic.Issuers = []certmagic.Issuer{issuer}
+
 	cfg := &SiteConfig{
 		Root:       Root,
-		TLS:        &caddytls.Config{Manager: certmagic.NewDefault()},
+		TLS:        &caddytls.Config{Manager: magic, Issuer: issuer},
 		IndexPages: staticfiles.DefaultIndexPages,
 	}
 	ctx.saveConfig(key, cfg)

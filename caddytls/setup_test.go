@@ -16,29 +16,27 @@ package caddytls
 
 import (
 	"crypto/tls"
-	"io/ioutil"
 	"log"
 	"os"
 	"testing"
 
-	"gitee.com/admpub/certmagic"
 	"github.com/admpub/caddy"
-	"github.com/go-acme/lego/v4/certcrypto"
+	"github.com/caddyserver/certmagic"
 )
 
 func TestMain(m *testing.M) {
 	// Write test certificates to disk before tests, and clean up
 	// when we're done.
-	err := ioutil.WriteFile(certFile, testCert, 0644)
+	err := os.WriteFile(certFile, testCert, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = ioutil.WriteFile(keyFile, testKey, 0644)
+	err = os.WriteFile(keyFile, testKey, 0644)
 	if err != nil {
 		os.Remove(certFile)
 		log.Fatal(err)
 	}
-	err = ioutil.WriteFile(caCertFile, caCert, 0644)
+	err = os.WriteFile(caCertFile, caCert, 0644)
 	if err != nil {
 		os.Remove(keyFile)
 		os.Remove(certFile)
@@ -54,14 +52,14 @@ func TestMain(m *testing.M) {
 }
 
 func TestSetupParseBasic(t *testing.T) {
-	tmpdir, err := ioutil.TempDir("", "caddytls_setup_test_")
+	tmpdir, err := os.MkdirTemp("", "caddytls_setup_test_")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpdir)
 
 	certmagic.Default.Storage = &certmagic.FileStorage{Path: tmpdir}
-	cfg := &Config{Manager: certmagic.NewDefault()}
+	cfg := &Config{Manager: certmagic.NewDefault(), Issuer: &certmagic.ACMEIssuer{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", `tls `+certFile+` `+keyFile+``)
 
@@ -140,7 +138,7 @@ func TestSetupParseWithOptionalParams(t *testing.T) {
             alpn http/1.1
         }`
 
-	tmpdir, err := ioutil.TempDir("", "caddytls_setup_test_")
+	tmpdir, err := os.MkdirTemp("", "caddytls_setup_test_")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +281,7 @@ func TestSetupParseWithClientAuth(t *testing.T) {
 			clients verify_if_given
 		}`, tls.VerifyClientCertIfGiven, true, noCAs},
 	} {
-		cfg := &Config{Manager: certmagic.NewDefault()}
+		cfg := &Config{Manager: certmagic.NewDefault(), Issuer: &certmagic.ACMEIssuer{}}
 		RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 		c := caddy.NewTestController("", caseData.params)
 
@@ -336,7 +334,7 @@ func TestSetupParseWithCAUrl(t *testing.T) {
 				ca 1 2
 			}`, true, ""},
 	} {
-		cfg := &Config{Manager: &certmagic.Config{}}
+		cfg := &Config{Manager: &certmagic.Config{}, Issuer: &certmagic.ACMEIssuer{}}
 		RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 		c := caddy.NewTestController("", caseData.params)
 
@@ -351,8 +349,8 @@ func TestSetupParseWithCAUrl(t *testing.T) {
 			t.Errorf("In case %d: Expected no errors, got: %v", caseNumber, err)
 		}
 
-		if cfg.Manager.CA != caseData.expectedCAUrl {
-			t.Errorf("Expected '%v' as CAUrl, got %#v", caseData.expectedCAUrl, cfg.Manager.CA)
+		if cfg.Issuer.CA != caseData.expectedCAUrl {
+			t.Errorf("Expected '%v' as CAUrl, got %#v", caseData.expectedCAUrl, cfg.Issuer.CA)
 		}
 	}
 }
@@ -361,7 +359,7 @@ func TestSetupParseWithKeyType(t *testing.T) {
 	params := `tls {
             key_type p384
         }`
-	cfg := &Config{Manager: &certmagic.Config{}}
+	cfg := &Config{Manager: &certmagic.Config{}, Issuer: &certmagic.ACMEIssuer{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
 
@@ -370,8 +368,8 @@ func TestSetupParseWithKeyType(t *testing.T) {
 		t.Errorf("Expected no errors, got: %v", err)
 	}
 
-	if cfg.Manager.KeyType != certcrypto.EC384 {
-		t.Errorf("Expected 'P384' as KeyType, got %#v", cfg.Manager.KeyType)
+	if cfg.KeyType != certmagic.P384 {
+		t.Errorf("Expected 'P384' as KeyType, got %#v", cfg.KeyType)
 	}
 }
 
@@ -379,7 +377,7 @@ func TestSetupParseWithCurves(t *testing.T) {
 	params := `tls {
             curves x25519 p256 p384 p521
         }`
-	cfg := &Config{Manager: &certmagic.Config{}}
+	cfg := &Config{Manager: &certmagic.Config{}, Issuer: &certmagic.ACMEIssuer{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
 
@@ -406,7 +404,7 @@ func TestSetupParseWithOneTLSProtocol(t *testing.T) {
 	params := `tls {
             protocols tls1.2
         }`
-	cfg := &Config{Manager: &certmagic.Config{}}
+	cfg := &Config{Manager: &certmagic.Config{}, Issuer: &certmagic.ACMEIssuer{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
 
@@ -427,7 +425,7 @@ func TestSetupParseWithOneTLSProtocol(t *testing.T) {
 func TestSetupParseWithEmail(t *testing.T) {
 	email := "user@example.com"
 	params := "tls " + email
-	cfg := &Config{Manager: &certmagic.Config{}}
+	cfg := &Config{Manager: &certmagic.Config{}, Issuer: &certmagic.ACMEIssuer{}}
 	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
 	c := caddy.NewTestController("", params)
 
@@ -439,8 +437,8 @@ func TestSetupParseWithEmail(t *testing.T) {
 	if cfg.ACMEEmail != email {
 		t.Errorf("Expected cfg.ACMEEmail to be %#v, got %#v", email, cfg.ACMEEmail)
 	}
-	if cfg.Manager.Email != email {
-		t.Errorf("Expected cfg.Manager.Email to be %#v, got %#v", email, cfg.Manager.Email)
+	if cfg.Issuer.Email != email {
+		t.Errorf("Expected cfg.Manager.Email to be %#v, got %#v", email, cfg.Issuer.Email)
 	}
 }
 

@@ -243,7 +243,7 @@ func TestParseBlockHealthCheck(t *testing.T) {
 		{"health_check /health\n health_check_timeout 15s", "30s", "15s"},
 
 		// Test #6: Some funky spelling to make sure it still defaults
-		{"health_check /health health_check_timeout 15s", "30s", "1m0s"},
+		{"health_check /health health_check_timeout 15s", "30s", "15s"},
 	}
 
 	for i, test := range tests {

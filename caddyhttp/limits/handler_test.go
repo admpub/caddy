@@ -15,7 +15,7 @@
 package limits
 
 import (
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +33,7 @@ func TestBodySizeLimit(t *testing.T) {
 	)
 	l := Limit{
 		Next: httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
-			gotContent, gotError = ioutil.ReadAll(r.Body)
+			gotContent, gotError = io.ReadAll(r.Body)
 			return 0, nil
 		}),
 		BodyLimits: []httpserver.PathLimit{{Path: "/", Limit: int64(len(expectContent))}},

@@ -17,7 +17,6 @@ package proxy
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -64,7 +63,7 @@ func TestBodyRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := ioutil.ReadAll(resp.Body)
+	result, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +80,7 @@ func TestBodyRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err = ioutil.ReadAll(resp.Body)
+	result, err = io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
 	}

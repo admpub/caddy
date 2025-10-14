@@ -271,7 +271,7 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, t
 		rp.Transport = &http3.Transport{
 			QUICConfig: &quic.Config{
 				HandshakeIdleTimeout: defaultCryptoHandshakeTimeout,
-				KeepAlivePeriod:      defaultCryptoHandshakeTimeout,
+				KeepAlivePeriod:      timeout / 2,
 			},
 		}
 	} else if keepalive != http.DefaultMaxIdleConnsPerHost || strings.HasPrefix(target.Scheme, caddyconst.SchemeSrv) {

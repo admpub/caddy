@@ -16,7 +16,7 @@ package log
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -90,7 +90,7 @@ func TestLogRequestBody(t *testing.T) {
 		}},
 		Next: httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
 			// drain up body
-			if _, err := ioutil.ReadAll(r.Body); err != nil {
+			if _, err := io.ReadAll(r.Body); err != nil {
 				log.Println("[ERROR] failed to read request body: ", err)
 			}
 			return 0, nil
@@ -156,7 +156,7 @@ func TestMultiEntries(t *testing.T) {
 		}},
 		Next: httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
 			// drain up body
-			if _, err := ioutil.ReadAll(r.Body); err != nil {
+			if _, err := io.ReadAll(r.Body); err != nil {
 				log.Println("[ERROR] failed to read request body: ", err)
 			}
 			return 0, nil

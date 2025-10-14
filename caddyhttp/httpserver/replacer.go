@@ -21,7 +21,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -392,7 +391,7 @@ func (r *replacer) getSubstitution(key string) string {
 		if !canLogRequest(r.request) {
 			return r.emptyValue
 		}
-		_, err := ioutil.ReadAll(r.request.Body)
+		_, err := io.ReadAll(r.request.Body)
 		if err != nil {
 			if err == ErrMaxBytesExceeded {
 				return r.emptyValue

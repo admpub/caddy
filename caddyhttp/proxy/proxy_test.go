@@ -21,7 +21,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -58,7 +57,7 @@ func newTLSServer(handler http.Handler) *httptest.Server {
 }
 
 func TestReverseProxy(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	testHeaderValue := []string{"header-value"}
@@ -97,7 +96,7 @@ func TestReverseProxy(t *testing.T) {
 	requestReceived := false
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// read the body (even if it's empty) to make Go parse trailers
-		if _, err := io.Copy(ioutil.Discard, r.Body); err != nil {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			log.Println("[ERROR] failed to copy bytes: ", err)
 		}
 
@@ -165,7 +164,7 @@ func TestReverseProxy(t *testing.T) {
 	verifyHeadersTrailers(res.Header, res.Trailer)
 
 	// Make sure {upstream} placeholder is set
-	r.Body = ioutil.NopCloser(strings.NewReader("test"))
+	r.Body = io.NopCloser(strings.NewReader("test"))
 	rr := httpserver.NewResponseRecorder(testResponseRecorder{
 		ResponseWriterWrapper: &httpserver.ResponseWriterWrapper{ResponseWriter: httptest.NewRecorder()},
 	})
@@ -196,7 +195,7 @@ func (r *trailerTestStringReader) Close() error {
 }
 
 func TestReverseProxyInsecureSkipVerify(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	var requestReceived bool
@@ -235,7 +234,7 @@ func TestReverseProxyInsecureSkipVerify(t *testing.T) {
 // This test will fail when using the race detector without atomic reads &
 // writes of UpstreamHost.Conns and UpstreamHost.Unhealthy.
 func TestReverseProxyMaxConnLimit(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	const MaxTestConns = 2
@@ -304,7 +303,7 @@ func TestReverseProxyTimeout(t *testing.T) {
 	timeout := 2 * time.Second
 	fallbackDelay := 300 * time.Millisecond
 	errorMargin := 100 * time.Millisecond
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	// set up proxy
@@ -332,8 +331,11 @@ func TestWebSocketReverseProxyNonHijackerPanic(t *testing.T) {
 	// Capture the expected panic
 	defer func() {
 		r := recover()
+		if r == nil {
+			return
+		}
 		if _, ok := r.(httpserver.NonHijackerError); !ok {
-			t.Error("not get the expected panic")
+			t.Errorf("not get the expected panic: %v", r)
 		}
 	}()
 
@@ -565,7 +567,7 @@ func TestUnixSocketProxy(t *testing.T) {
 	}))
 
 	// Get absolute path for unix: socket
-	dir, err := ioutil.TempDir("", "caddy_proxytest")
+	dir, err := os.MkdirTemp("", "caddy_proxytest")
 	if err != nil {
 		t.Fatalf("Failed to make temp dir to contain unix socket. %v", err)
 	}
@@ -597,13 +599,13 @@ func TestUnixSocketProxy(t *testing.T) {
 		t.Fatalf("Unable to GET: %v", err)
 	}
 
-	greeting, err := ioutil.ReadAll(res.Body)
+	greeting, err := io.ReadAll(res.Body)
 	res.Body.Close()
 	if err != nil {
 		t.Fatalf("Unable to GET: %v", err)
 	}
 
-	actualMsg := fmt.Sprintf("%s", greeting)
+	actualMsg := string(greeting)
 
 	if !proxySuccess {
 		t.Errorf("Expected request to be proxied, but it wasn't")
@@ -627,7 +629,7 @@ func GetSocketProxy(messageFormat string, prefix string) (*Proxy, *httptest.Serv
 		fmt.Fprintf(w, messageFormat, r.URL.String())
 	}))
 
-	dir, err := ioutil.TempDir("", "caddy_proxytest")
+	dir, err := os.MkdirTemp("", "caddy_proxytest")
 	if err != nil {
 		return nil, nil, dir, fmt.Errorf("failed to make temp dir to contain unix socket. %v", err)
 	}
@@ -663,13 +665,13 @@ func GetTestServerMessage(p *Proxy, ts *httptest.Server, path string) (string, e
 		return "", fmt.Errorf("unable to GET: %v", err)
 	}
 
-	greeting, err := ioutil.ReadAll(res.Body)
+	greeting, err := io.ReadAll(res.Body)
 	res.Body.Close()
 	if err != nil {
 		return "", fmt.Errorf("unable to read body: %v", err)
 	}
 
-	return fmt.Sprintf("%s", greeting), nil
+	return string(greeting), nil
 }
 
 func TestUnixSocketProxyPaths(t *testing.T) {
@@ -733,7 +735,7 @@ func TestUnixSocketProxyPaths(t *testing.T) {
 }
 
 func TestUpstreamHeadersUpdate(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	var actualHeaders http.Header
@@ -815,7 +817,7 @@ func TestUpstreamHeadersUpdate(t *testing.T) {
 }
 
 func TestDownstreamHeadersUpdate(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -962,7 +964,7 @@ func TestMultiReverseProxyFromClient(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to make request: %v", err)
 		}
-		body, err := ioutil.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
 			t.Fatalf("Failed to read response: %v", err)
@@ -1028,7 +1030,7 @@ func TestReverseProxyTransparentHeaders(t *testing.T) {
 
 func testReverseProxyTransparentHeaders(t *testing.T, remoteAddr, forwardedForHeader string, expected []string) {
 	// Arrange
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	var actualHeaders http.Header
@@ -1172,7 +1174,7 @@ func basicAuthTestcase(t *testing.T, upstreamUser, clientUser *url.Userinfo) {
 	if w.Code != 200 {
 		t.Fatalf("Invalid response code: %d", w.Code)
 	}
-	body, _ := ioutil.ReadAll(w.Body)
+	body, _ := io.ReadAll(w.Body)
 
 	if clientUser != nil {
 		if string(body) != clientUser.String() {
@@ -1298,7 +1300,7 @@ func TestProxyDirectorURL(t *testing.T) {
 }
 
 func TestReverseProxyRetry(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	// set up proxy
@@ -1346,7 +1348,7 @@ func TestReverseProxyRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -1357,12 +1359,12 @@ func TestReverseProxyRetry(t *testing.T) {
 }
 
 func TestReverseProxyLargeBody(t *testing.T) {
-	log.SetOutput(ioutil.Discard)
+	log.SetOutput(io.Discard)
 	defer log.SetOutput(os.Stderr)
 
 	// set up proxy
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.Copy(ioutil.Discard, r.Body); err != nil {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			log.Println("[ERROR] failed to copy: ", err)
 		}
 

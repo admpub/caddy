@@ -16,7 +16,6 @@ package markdown
 
 import (
 	"io"
-	"io/ioutil"
 	"os"
 
 	"github.com/admpub/caddy/caddyhttp/httpserver"
@@ -47,7 +46,7 @@ func (f FileInfo) Summarize(wordcount int) (string, error) {
 	}
 	defer fp.Close()
 
-	buf, err := ioutil.ReadAll(fp)
+	buf, err := io.ReadAll(fp)
 	if err != nil {
 		return "", err
 	}
@@ -58,7 +57,7 @@ func (f FileInfo) Summarize(wordcount int) (string, error) {
 // Markdown processes the contents of a page in b. It parses the metadata
 // (if any) and uses the template (if found).
 func (c *Config) Markdown(title string, r io.Reader, dirents []os.FileInfo, ctx httpserver.Context) ([]byte, error) {
-	body, err := ioutil.ReadAll(r)
+	body, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}

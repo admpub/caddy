@@ -28,7 +28,6 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -108,17 +107,8 @@ func NewServer(addr string, group []*SiteConfig) (*Server, error) {
 		if HTTP2 && QUIC {
 			s.Server.Handler = s.wrapWithSvcHeaders(s.Server.Handler)
 			//s.quicServer = &http3.Server{Server: s.Server}
-			addr, port, err := net.SplitHostPort(s.Server.Addr)
-			if err != nil {
-				return nil, fmt.Errorf(`failed to parse server address %q: %w`, s.Server.Addr, err)
-			}
-			portN, err := strconv.Atoi(port)
-			if err != nil {
-				return nil, fmt.Errorf(`failed to parse port %q: %w`, port, err)
-			}
 			s.quicServer = &http3.Server{
-				Addr:      addr,
-				Port:      portN,
+				Addr:      s.Server.Addr,
 				TLSConfig: s.Server.TLSConfig,
 				QUICConfig: &quic.Config{
 					//HandshakeIdleTimeout:,
@@ -438,7 +428,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 		// check for ACME challenge even if vhost is nil;
 		// could be a new host coming online soon - choose any
 		// vhost's cert manager configuration, I guess
-		if len(s.sites) > 0 && s.sites[0].TLS.Manager.HandleHTTPChallenge(w, r) {
+		if len(s.sites) > 0 && s.sites[0].TLS.Issuer.HandleHTTPChallenge(w, r) {
 			return 0, nil
 		}
 
@@ -455,7 +445,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 
 	// we still check for ACME challenge if the vhost exists,
 	// because the HTTP challenge might be disabled by its config
-	if vhost.TLS.Manager.HandleHTTPChallenge(w, r) {
+	if vhost.TLS.Issuer.HandleHTTPChallenge(w, r) {
 		return 0, nil
 	}
 
@@ -473,7 +463,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) (int, error) 
 	// sites that do not - if mismatched, close the connection
 	if !vhost.TLS.InsecureDisableSNIMatching && r.TLS != nil &&
 		vhost.TLS.ClientAuth != tls.NoClientCert &&
-		strings.ToLower(r.TLS.ServerName) != strings.ToLower(hostname) {
+		!strings.EqualFold(r.TLS.ServerName, hostname) {
 		r.Close = true
 		log.Printf("[ERROR] %s - strict host matching: SNI (%s) and HTTP Host (%s) values differ",
 			vhost.Addr, r.TLS.ServerName, hostname)
@@ -492,7 +482,7 @@ func trimPathPrefix(u *url.URL, prefix string) *url.URL {
 	}
 	// After trimming path reconstruct uri string with Query before parsing
 	trimmedURI := trimmedPath
-	if u.RawQuery != "" || u.ForceQuery == true {
+	if u.RawQuery != "" || u.ForceQuery {
 		trimmedURI = trimmedPath + "?" + u.RawQuery
 	}
 	if u.Fragment != "" {

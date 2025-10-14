@@ -16,7 +16,6 @@ package markdown
 
 import (
 	"bytes"
-	"io/ioutil"
 	"os"
 	"sync"
 	"text/template"
@@ -118,7 +117,7 @@ func fileChanged(new, old os.FileInfo) bool {
 func SetTemplate(t *template.Template, name, filename string) error {
 
 	// Read template
-	buf, err := ioutil.ReadFile(filename)
+	buf, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}

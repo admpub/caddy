@@ -15,15 +15,16 @@
 package httpserver
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"strconv"
 
-	"gitee.com/admpub/certmagic"
 	"github.com/admpub/caddy"
 	"github.com/admpub/caddy/caddytls"
+	"github.com/caddyserver/certmagic"
 )
 
 func activateHTTPS(cctx caddy.Context) error {
@@ -34,6 +35,7 @@ func activateHTTPS(cctx caddy.Context) error {
 	}
 
 	ctx := cctx.(*httpContext)
+	stdCtx := context.TODO()
 
 	// pre-screen each config and earmark the ones that qualify for managed TLS
 	markQualifiedForAutoHTTPS(ctx.siteConfigs)
@@ -46,7 +48,7 @@ func activateHTTPS(cctx caddy.Context) error {
 		if c.TLS.Manager.OnDemand != nil {
 			continue // obtain these certificates on-demand instead
 		}
-		err := c.TLS.Manager.ObtainCert(c.TLS.Hostname, operatorPresent)
+		err := c.TLS.Manager.ObtainCertAsync(stdCtx, c.TLS.Hostname)
 		if err != nil {
 			//return err
 			log.Printf("[WARNING] %s: %s", c.Addr.String(), err.Error())
@@ -74,7 +76,7 @@ func activateHTTPS(cctx caddy.Context) error {
 		certCache, ok := ctx.instance.Storage[caddytls.CertCacheInstStorageKey].(*certmagic.Cache)
 		ctx.instance.StorageMu.RUnlock()
 		if ok && certCache != nil {
-			err = certCache.RenewManagedCertificates()
+			err = certCache.RenewManagedCertificates(stdCtx)
 			if err != nil {
 				return err
 			}
@@ -107,6 +109,7 @@ func markQualifiedForAutoHTTPS(configs []*SiteConfig) {
 // but no certificates will be parsed loaded into the cache, and the returned error
 // value will always be nil.
 func enableAutoHTTPS(configs []*SiteConfig, loadCertificates bool) error {
+	stdCtx := context.TODO()
 	for _, cfg := range configs {
 		if cfg == nil || cfg.TLS == nil || !cfg.TLS.Managed ||
 			cfg.TLS.Manager == nil || cfg.TLS.Manager.OnDemand != nil {
@@ -114,8 +117,8 @@ func enableAutoHTTPS(configs []*SiteConfig, loadCertificates bool) error {
 		}
 		cfg.TLS.Enabled = true
 		cfg.Addr.Scheme = "https"
-		if loadCertificates && certmagic.HostQualifies(cfg.TLS.Hostname) {
-			_, err := cfg.TLS.Manager.CacheManagedCertificate(cfg.TLS.Hostname)
+		if loadCertificates && certmagic.SubjectQualifiesForPublicCert(cfg.TLS.Hostname) {
+			_, err := cfg.TLS.Manager.CacheManagedCertificate(stdCtx, cfg.TLS.Hostname)
 			if err != nil {
 				return err
 			}

@@ -16,7 +16,6 @@ package push
 
 import (
 	"errors"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -387,7 +386,7 @@ func TestMiddlewareShouldPushIndexFile(t *testing.T) {
 		t.Fatalf("Could not create HTTP request: %v", err)
 	}
 
-	root, err := ioutil.TempDir("", "caddy")
+	root, err := os.MkdirTemp("", "caddy")
 	if err != nil {
 		t.Fatalf("Could not create temporary directory: %v", err)
 	}
@@ -444,7 +443,7 @@ func TestMiddlewareShouldNotPushIndexFileWhenNotARule(t *testing.T) {
 		t.Fatalf("Could not create HTTP request: %v", err)
 	}
 
-	root, err := ioutil.TempDir("", "caddy")
+	root, err := os.MkdirTemp("", "caddy")
 	if err != nil {
 		t.Fatalf("Could not create temporary directory: %v", err)
 	}

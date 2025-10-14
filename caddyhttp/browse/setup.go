@@ -16,8 +16,8 @@ package browse
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
+	"os"
 	"text/template"
 
 	"github.com/admpub/caddy"
@@ -86,7 +86,7 @@ func browseParse(c *caddy.Controller) ([]Config, error) {
 		// Second argument would be the template file to use
 		var tplText string
 		if c.NextArg() {
-			tplBytes, err := ioutil.ReadFile(c.Val())
+			tplBytes, err := os.ReadFile(c.Val())
 			if err != nil {
 				return configs, err
 			}

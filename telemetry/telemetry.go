@@ -36,7 +36,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -120,7 +120,7 @@ func emit(final bool) error {
 			// the endpoint has been deprecated and is no longer servicing clients
 			err = fmt.Errorf("telemetry server replied with HTTP %d; upgrade required", resp.StatusCode)
 			if clen := resp.Header.Get("Content-Length"); clen != "0" && clen != "" {
-				bodyBytes, readErr := ioutil.ReadAll(resp.Body)
+				bodyBytes, readErr := io.ReadAll(resp.Body)
 				if readErr != nil {
 					log.Printf("[ERROR] Reading response body from server: %v", readErr)
 				}
@@ -134,7 +134,7 @@ func emit(final bool) error {
 			// the endpoint is unavailable, at least to this client, for legal reasons (!)
 			err = fmt.Errorf("telemetry server replied with HTTP %d %s: please consult the project website and developers for guidance", resp.StatusCode, resp.Status)
 			if clen := resp.Header.Get("Content-Length"); clen != "0" && clen != "" {
-				bodyBytes, readErr := ioutil.ReadAll(resp.Body)
+				bodyBytes, readErr := io.ReadAll(resp.Body)
 				if readErr != nil {
 					log.Printf("[ERROR] Reading response body from server: %v", readErr)
 				}

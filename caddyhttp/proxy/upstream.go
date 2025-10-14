@@ -20,12 +20,12 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"os"
 	"path"
 	"regexp"
 	"strconv"
@@ -536,7 +536,7 @@ func parseBlock(c *caddyfile.Dispenser, u *staticUpstream, hasSrv bool) error {
 			caCertificatesAdded[caFile] = struct{}{}
 
 			// any client with a certificate from this CA will be allowed to connect
-			caCrt, err := ioutil.ReadFile(caFile)
+			caCrt, err := os.ReadFile(caFile)
 			if err != nil {
 				return c.Err(err.Error())
 			}
@@ -571,17 +571,17 @@ func parseBlock(c *caddyfile.Dispenser, u *staticUpstream, hasSrv bool) error {
 		u.Timeout = dur
 	case "tls_client":
 		if !c.NextArg() {
-                        return c.ArgErr()
-                }
-                clientCertFile := c.Val()
+			return c.ArgErr()
+		}
+		clientCertFile := c.Val()
 		if !c.NextArg() {
-                        return c.ArgErr()
-                }
-                clientKeyFile := c.Val()
+			return c.ArgErr()
+		}
+		clientKeyFile := c.Val()
 		clientKeyPair, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
-        	if (err != nil) {
-                	return c.Errf("unable to load keypair from certfile:%s keyfile:%s", clientCertFile, clientKeyFile)
-        	}
+		if err != nil {
+			return c.Errf("unable to load keypair from certfile:%s keyfile:%s", clientCertFile, clientKeyFile)
+		}
 		u.ClientKeyPair = &clientKeyPair
 	default:
 		return c.Errf("unknown property '%s'", c.Val())
@@ -652,7 +652,7 @@ func (u *staticUpstream) healthCheck() {
 					return true
 				}
 				defer func() {
-					if _, err := io.Copy(ioutil.Discard, r.Body); err != nil {
+					if _, err := io.Copy(io.Discard, r.Body); err != nil {
 						log.Println("[ERROR] failed to copy: ", err)
 					}
 					_ = r.Body.Close()
@@ -665,7 +665,7 @@ func (u *staticUpstream) healthCheck() {
 				}
 				// TODO ReadAll will be replaced if deemed necessary
 				//      See https://github.com/admpub/caddy/pull/1691
-				buf, err := ioutil.ReadAll(r.Body)
+				buf, err := io.ReadAll(r.Body)
 				if err != nil {
 					return true
 				}

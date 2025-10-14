@@ -16,11 +16,11 @@ package caddymain
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -29,7 +29,6 @@ import (
 	"strconv"
 	"strings"
 
-	"gitee.com/admpub/certmagic"
 	"github.com/admpub/caddy"
 	"github.com/admpub/caddy/caddyfile"
 	"github.com/admpub/caddy/caddytls"
@@ -38,6 +37,9 @@ import (
 	"github.com/klauspost/cpuid"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 
+	"github.com/caddyserver/certmagic"
+	"go.uber.org/zap"
+
 	_ "github.com/admpub/caddy/caddyhttp" // plug in the HTTP server type
 	// This is where other plugins get plugged in (imported)
 )
@@ -45,11 +47,11 @@ import (
 func init() {
 	caddy.TrapSignals()
 
-	flag.BoolVar(&certmagic.Default.Agreed, "agree", false, "Agree to the CA's Subscriber Agreement")
-	flag.StringVar(&certmagic.Default.CA, "ca", certmagic.Default.CA, "URL to certificate authority's ACME server directory")
+	flag.BoolVar(&certmagic.DefaultACME.Agreed, "agree", false, "Agree to the CA's Subscriber Agreement")
+	flag.StringVar(&certmagic.DefaultACME.CA, "ca", certmagic.DefaultACME.CA, "URL to certificate authority's ACME server directory")
 	flag.StringVar(&certmagic.Default.DefaultServerName, "default-sni", certmagic.Default.DefaultServerName, "If a ClientHello ServerName is empty, use this ServerName to choose a TLS certificate")
-	flag.BoolVar(&certmagic.Default.DisableHTTPChallenge, "disable-http-challenge", certmagic.Default.DisableHTTPChallenge, "Disable the ACME HTTP challenge")
-	flag.BoolVar(&certmagic.Default.DisableTLSALPNChallenge, "disable-tls-alpn-challenge", certmagic.Default.DisableTLSALPNChallenge, "Disable the ACME TLS-ALPN challenge")
+	flag.BoolVar(&certmagic.DefaultACME.DisableHTTPChallenge, "disable-http-challenge", certmagic.DefaultACME.DisableHTTPChallenge, "Disable the ACME HTTP challenge")
+	flag.BoolVar(&certmagic.DefaultACME.DisableTLSALPNChallenge, "disable-tls-alpn-challenge", certmagic.DefaultACME.DisableTLSALPNChallenge, "Disable the ACME TLS-ALPN challenge")
 	flag.StringVar(&disabledMetrics, "disabled-metrics", "", "Comma-separated list of telemetry metrics to disable")
 	flag.StringVar(&conf, "conf", "", "Caddyfile to load (default \""+caddy.DefaultConfigFile+"\")")
 	flag.StringVar(&cpu, "cpu", "100%", "CPU cap")
@@ -57,7 +59,7 @@ func init() {
 	flag.StringVar(&envFile, "envfile", "", "Path to file with environment variables to load in KEY=VALUE format")
 	flag.BoolVar(&fromJSON, "json-to-caddyfile", false, "From JSON stdin to Caddyfile stdout")
 	flag.BoolVar(&plugins, "plugins", false, "List installed plugins")
-	flag.StringVar(&certmagic.Default.Email, "email", "", "Default ACME CA account email address")
+	flag.StringVar(&certmagic.DefaultACME.Email, "email", "", "Default ACME CA account email address")
 	flag.DurationVar(&certmagic.HTTPTimeout, "catimeout", certmagic.HTTPTimeout, "Default ACME CA HTTP timeout")
 	flag.StringVar(&logfile, "log", "", "Process log file")
 	flag.BoolVar(&logTimestamps, "log-timestamps", true, "Enable timestamps for the process log")
@@ -84,7 +86,10 @@ func Run() {
 
 	caddy.AppName = appName
 	caddy.AppVersion = module.Version
-	caddy.OnProcessExit = append(caddy.OnProcessExit, certmagic.CleanUpOwnLocks)
+	caddy.OnProcessExit = append(caddy.OnProcessExit, func() {
+		// TODO: Redirect to our own logger instead of zap.NewNop()
+		certmagic.CleanUpOwnLocks(context.TODO(), zap.NewNop())
+	})
 	certmagic.UserAgent = appName + "/" + cleanModVersion
 
 	if !logTimestamps {
@@ -99,7 +104,7 @@ func Run() {
 	case "stderr":
 		log.SetOutput(os.Stderr)
 	case "":
-		log.SetOutput(ioutil.Discard)
+		log.SetOutput(io.Discard)
 	default:
 		if logRollMB > 0 {
 			log.SetOutput(&lumberjack.Logger{
@@ -258,7 +263,7 @@ func confLoader(serverType string) (caddy.Input, error) {
 		contents = []byte("import " + conf)
 	} else {
 		var err error
-		contents, err = ioutil.ReadFile(conf)
+		contents, err = os.ReadFile(conf)
 		if err != nil {
 			return nil, err
 		}
@@ -273,7 +278,7 @@ func confLoader(serverType string) (caddy.Input, error) {
 
 // defaultLoader loads the Caddyfile from the current working directory.
 func defaultLoader(serverType string) (caddy.Input, error) {
-	contents, err := ioutil.ReadFile(caddy.DefaultConfigFile)
+	contents, err := os.ReadFile(caddy.DefaultConfigFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -310,7 +315,7 @@ func getBuildModule() *debug.Module {
 
 func checkJSONCaddyfile() {
 	if fromJSON {
-		jsonBytes, err := ioutil.ReadAll(os.Stdin)
+		jsonBytes, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Read stdin failed: %v", err)
 			os.Exit(1)
@@ -324,7 +329,7 @@ func checkJSONCaddyfile() {
 		os.Exit(0)
 	}
 	if toJSON {
-		caddyfileBytes, err := ioutil.ReadAll(os.Stdin)
+		caddyfileBytes, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Read stdin failed: %v", err)
 			os.Exit(1)
@@ -433,7 +438,7 @@ func initTelemetry() error {
 			log.Printf("[ERROR] Persisting instance UUID: %v", err)
 			return id
 		}
-		err = ioutil.WriteFile(uuidFilename, []byte(id.String()), 0600) // human-readable as a string
+		err = os.WriteFile(uuidFilename, []byte(id.String()), 0600) // human-readable as a string
 		if err != nil {
 			log.Printf("[ERROR] Persisting instance UUID: %v", err)
 		}
@@ -451,7 +456,7 @@ func initTelemetry() error {
 		id = newUUID()
 	} else {
 		defer uuidFile.Close()
-		uuidBytes, err := ioutil.ReadAll(uuidFile)
+		uuidBytes, err := io.ReadAll(uuidFile)
 		if err != nil {
 			log.Printf("[ERROR] Reading persistent UUID: %v", err)
 			id = newUUID()

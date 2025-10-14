@@ -17,7 +17,6 @@ package basicauth
 import (
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -167,7 +166,7 @@ func TestMultipleOverlappingRules(t *testing.T) {
 }
 
 func contentHandler(w http.ResponseWriter, r *http.Request) (int, error) {
-	fmt.Fprintf(w, r.URL.String())
+	fmt.Fprint(w, r.URL.String())
 	return http.StatusOK, nil
 }
 
@@ -176,7 +175,7 @@ func TestHtpasswd(t *testing.T) {
 	htpasswdFile := `sha1:{SHA}dcAUljwz99qFjYR0YLTXx0RqLww=
 md5:$apr1$l42y8rex$pOA2VJ0x/0TwaFeAF9nX61`
 
-	htfh, err := ioutil.TempFile("", "basicauth-")
+	htfh, err := os.CreateTemp("", "basicauth-")
 	if err != nil {
 		t.Skip("Error creating temp file, will skip htpassword test")
 		return
