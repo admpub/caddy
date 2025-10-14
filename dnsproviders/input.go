@@ -127,18 +127,20 @@ func (i Inputs) RenderCaddyfile() []string {
 }
 
 type HTML struct {
-	Label string
-	Input string
-	Help  string
+	LabelRaw string
+	Label    string
+	Input    string
+	Help     string
 }
 
 func (i Inputs) RenderHTMLs(namePrefix string) []HTML {
 	results := make([]HTML, len(i))
 	for i, input := range i {
 		results[i] = HTML{
-			Label: input.RenderHTMLLabel(),
-			Input: input.RenderHTMLInput(namePrefix),
-			Help:  input.RenderHTMLHelp(),
+			LabelRaw: input.Label,
+			Label:    input.RenderHTMLLabel(),
+			Input:    input.RenderHTMLInput(namePrefix),
+			Help:     input.RenderHTMLHelp(),
 		}
 	}
 	return results
