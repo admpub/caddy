@@ -29,14 +29,14 @@ type Input struct {
 	Default     string
 }
 
-func (i Input) RenderHelp() string {
+func (i Input) RenderHTMLHelp() string {
 	if i.Help == "" {
 		return ``
 	}
 	return `<p class="help-block">` + i.Help + `</p>`
 }
 
-func (i Input) BuildAttrs() string {
+func (i Input) BuildHTMLAttrs() string {
 	var attrs string
 	if i.Required {
 		attrs += ` required`
@@ -65,7 +65,7 @@ func (i Input) BuildAttrs() string {
 	return attrs
 }
 
-func (i Input) RenderInput(namePrefix string) string {
+func (i Input) RenderHTMLInput(namePrefix string) string {
 	value := i.Value
 	if len(value) == 0 && len(i.Default) > 0 {
 		value = i.Default
@@ -80,9 +80,9 @@ func (i Input) RenderInput(namePrefix string) string {
 			}
 			options += `>` + option.Text + `</option>`
 		}
-		return `<select class="form-control" name="` + namePrefix + i.Name + `"` + i.BuildAttrs() + `>` + options + `</select>`
+		return `<select class="form-control" name="` + namePrefix + i.Name + `"` + i.BuildHTMLAttrs() + `>` + options + `</select>`
 	case `textarea`:
-		return `<textarea class="form-control" name="` + namePrefix + i.Name + `"` + i.BuildAttrs() + `>` + value + `</textarea>`
+		return `<textarea class="form-control" name="` + namePrefix + i.Name + `"` + i.BuildHTMLAttrs() + `>` + value + `</textarea>`
 	case `checkbox`:
 		var options string
 		for _, option := range i.Options {
@@ -104,11 +104,11 @@ func (i Input) RenderInput(namePrefix string) string {
 		}
 		return options
 	default:
-		return `<input class="form-control" type="` + i.Type + `" name="` + namePrefix + i.Name + `" value="` + value + `"` + i.BuildAttrs() + ` />`
+		return `<input class="form-control" type="` + i.Type + `" name="` + namePrefix + i.Name + `" value="` + value + `"` + i.BuildHTMLAttrs() + ` />`
 	}
 }
 
-func (i Input) RenderLabel() string {
+func (i Input) RenderHTMLLabel() string {
 	return `<label class="col-sm-2 control-label">` + i.Label + `</label>`
 }
 
@@ -122,6 +122,24 @@ func (i Inputs) RenderCaddyfile() []string {
 			value = input.Default
 		}
 		results[i] = input.Name + ` ` + value
+	}
+	return results
+}
+
+type HTML struct {
+	Label string
+	Input string
+	Help  string
+}
+
+func (i Inputs) RenderHTMLs(namePrefix string) []HTML {
+	results := make([]HTML, len(i))
+	for i, input := range i {
+		results[i] = HTML{
+			Label: input.RenderHTMLLabel(),
+			Input: input.RenderHTMLInput(namePrefix),
+			Help:  input.RenderHTMLHelp(),
+		}
 	}
 	return results
 }
