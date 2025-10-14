@@ -134,6 +134,84 @@ func (d *Dispenser) NextBlock() bool {
 	return true
 }
 
+// nextOnSameLine advances the cursor if the next
+// token is on the same line of the same file.
+func (d *Dispenser) nextOnSameLine() bool {
+	if d.cursor < 0 {
+		d.cursor++
+		return true
+	}
+	if d.cursor >= len(d.tokens)-1 {
+		return false
+	}
+	curr := d.tokens[d.cursor]
+	next := d.tokens[d.cursor+1]
+	if !isNextOnNewLine(curr, next) {
+		d.cursor++
+		return true
+	}
+	return false
+}
+
+// NextBlockNesting can be used as the condition of a for loop
+// to load the next token as long as it opens a block or
+// is already in a block nested more than initialNestingLevel.
+// In other words, a loop over NextBlockNesting() will iterate
+// all tokens in the block assuming the next token is an
+// open curly brace, until the matching closing brace.
+// The open and closing brace tokens for the outer-most
+// block will be consumed internally and omitted from
+// the iteration.
+//
+// Proper use of this method looks like this:
+//
+//	for nesting := d.Nesting(); d.NextBlockNesting(nesting); {
+//	}
+//
+// However, in simple cases where it is known that the
+// Dispenser is new and has not already traversed state
+// by a loop over NextBlockNesting(), this will do:
+//
+//	for d.NextBlockNesting() {
+//	}
+//
+// As with other token parsing logic, a loop over
+// NextBlockNesting() should be contained within a loop over
+// Next(), as it is usually prudent to skip the initial
+// token.
+func (d *Dispenser) NextBlockNesting(initialNestingLevel int) bool {
+	if d.nesting > initialNestingLevel {
+		if !d.Next() {
+			return false // should be EOF error
+		}
+		if d.Val() == "}" && !d.nextOnSameLine() {
+			d.nesting--
+		} else if d.Val() == "{" && !d.nextOnSameLine() {
+			d.nesting++
+		}
+		return d.nesting > initialNestingLevel
+	}
+	if !d.nextOnSameLine() { // block must open on same line
+		return false
+	}
+	if d.Val() != "{" {
+		d.cursor-- // roll back if not opening brace
+		return false
+	}
+	d.Next() // consume open curly brace
+	if d.Val() == "}" {
+		return false // open and then closed right away
+	}
+	d.nesting++
+	return true
+}
+
+// Nesting returns the current nesting level. Necessary
+// if using NextBlock()
+func (d *Dispenser) Nesting() int {
+	return d.nesting
+}
+
 // Val gets the text of the current token. If there is no token
 // loaded, it returns empty string.
 func (d *Dispenser) Val() string {

@@ -12,6 +12,12 @@ require (
 	github.com/hashicorp/go-syslog v1.0.0
 	github.com/jimstudt/http-authentication v0.0.0-20140401203705-3eca13d6893a
 	github.com/klauspost/cpuid v1.3.1
+	github.com/libdns/acmedns v0.5.0
+	github.com/libdns/alidns v1.0.4
+	github.com/libdns/cloudflare v0.2.1
+	github.com/libdns/dnspod v0.0.3
+	github.com/libdns/rfc2136 v1.0.1
+	github.com/libdns/tencentcloud v1.4.2
 	github.com/naoina/toml v0.1.1
 	github.com/quic-go/quic-go v0.55.0
 	github.com/russross/blackfriday v1.6.0
@@ -32,6 +38,7 @@ require (
 	github.com/mholt/acmez/v3 v3.1.4 // indirect
 	github.com/miekg/dns v1.1.68 // indirect
 	github.com/naoina/go-stringutil v0.1.0 // indirect
+	github.com/nrdcg/dnspod-go v0.4.0 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
