@@ -1,6 +1,9 @@
 package dnsproviders
 
-import "strconv"
+import (
+	"sort"
+	"strconv"
+)
 
 type Option struct {
 	Value   string
@@ -133,6 +136,15 @@ var inputsRegistry = map[string]Inputs{}
 
 func GetInputs(provider string) Inputs {
 	return inputsRegistry[provider]
+}
+
+func GetProviders() []string {
+	providers := make([]string, 0, len(inputsRegistry))
+	for provider := range inputsRegistry {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	return providers
 }
 
 func RegisterInputs(provider string, inputs Inputs) {
