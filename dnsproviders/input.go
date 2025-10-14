@@ -123,6 +123,12 @@ func (i Inputs) RenderCaddyfile() []string {
 	return results
 }
 
+func (i Inputs) Clone() Inputs {
+	results := make(Inputs, len(i))
+	copy(results, i)
+	return results
+}
+
 var inputsRegistry = map[string]Inputs{}
 
 func GetInputs(provider string) Inputs {
