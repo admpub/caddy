@@ -105,8 +105,6 @@ func NewServer(addr string, group []*SiteConfig) (*Server, error) {
 	if s.Server.TLSConfig != nil {
 		// enable QUIC if desired (requires HTTP/2)
 		if HTTP2 && QUIC {
-			s.Server.Handler = s.wrapWithSvcHeaders(s.Server.Handler)
-			//s.quicServer = &http3.Server{Server: s.Server}
 			s.quicServer = &http3.Server{
 				Addr:      s.Server.Addr,
 				TLSConfig: s.Server.TLSConfig,
