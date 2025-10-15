@@ -125,10 +125,27 @@ func setupTLS(c *caddy.Controller) error {
 			switch c.Val() {
 			case "ca":
 				arg := c.RemainingArgs()
-				if len(arg) != 1 {
+				if len(arg) < 1 {
 					return c.ArgErr()
 				}
 				config.Issuer.CA = arg[0]
+				if config.Issuer.CA == certmagic.ZeroSSLProductionCA {
+					issuer := &certmagic.ZeroSSLIssuer{
+						APIKey: os.Getenv(`ZEROSSL_API_KEY`),
+						Logger: config.Manager.Logger,
+					}
+					if len(issuer.APIKey) == 0 && len(arg) > 1 {
+						issuer.APIKey = arg[1]
+					}
+					if len(issuer.APIKey) == 0 {
+						return c.Err("ZeroSSL API key is required but not set. You can use the environment variable ZEROSSL_API_KEY to set this value.")
+					}
+					if len(config.Manager.Issuers) > 0 {
+						config.Manager.Issuers[0] = issuer
+					} else {
+						config.Manager.Issuers = []certmagic.Issuer{issuer}
+					}
+				}
 			case "key_type":
 				arg := c.RemainingArgs()
 				value, ok := supportedKeyTypes[strings.ToUpper(arg[0])]
