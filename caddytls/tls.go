@@ -85,7 +85,10 @@ func Revoke(domainName string) error {
 // known, public, and trusted ACME-compatible certificate
 // authorities.
 var KnownACMECAs = []string{
-	"https://acme-v02.api.letsencrypt.org/directory",
+	//"https://acme-v02.api.letsencrypt.org/directory",
+	certmagic.LetsEncryptProductionCA,
+	certmagic.ZeroSSLProductionCA,
+	certmagic.GoogleTrustProductionCA,
 }
 
 // DNSProviderConstructor is a function that takes credentials and
