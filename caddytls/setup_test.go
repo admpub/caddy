@@ -65,6 +65,10 @@ func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 	return provider, nil
 }
 
+func init() {
+	RegisterDNSProvider(`cloudflare`, NewDNSProvider)
+}
+
 func TestMain(m *testing.M) {
 	// Write test certificates to disk before tests, and clean up
 	// when we're done.
@@ -464,7 +468,6 @@ func TestSetupParseWithOneTLSProtocol(t *testing.T) {
 }
 
 func TestSetupParseWithOneTLSDNS(t *testing.T) {
-	RegisterDNSProvider(`cloudflare`, NewDNSProvider)
 	params := `tls {
             dns cloudflare {
 			  api_token 1234567890
@@ -489,8 +492,56 @@ func TestSetupParseWithOneTLSDNS(t *testing.T) {
 	t.Logf("%+v", dp)
 }
 
-func TestSetupParseWithOneTLSIssuer(t *testing.T) {
-	RegisterDNSProvider(`cloudflare`, NewDNSProvider)
+func TestSetupParseWithOneTLSIssuerACME(t *testing.T) {
+	params := `tls {
+		issuer acme ` + certmagic.GoogleTrustProductionCA + ` {\
+			alt_http_port 8080
+			propagation_delay 3s
+			propagation_timeout 1m
+			resolvers 1.1.1.1 8.8.8.8
+			dns_ttl 10s
+            dns cloudflare {
+			  api_token 1234567890
+			}
+			preferred_chains true {
+				root_common_name nameroot1 nameroot2
+				any_common_name  nameany1 nameany2
+			}
+		}
+    }`
+	cfg := &Config{Manager: &certmagic.Config{}, Issuer: &certmagic.ACMEIssuer{}}
+	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
+	c := caddy.NewTestController("", params)
+
+	err := setupTLS(c)
+	if err != nil {
+		t.Errorf("Expected no errors, got: %v", err)
+	}
+	iss := cfg.Manager.Issuers[0].(*certmagic.ACMEIssuer)
+	dp := iss.DNS01Solver.(*certmagic.DNS01Solver).DNSProvider.(*cloudflare.Provider)
+	if dp.APIToken != "1234567890" {
+		t.Errorf("Expected dp.APIToken to be %#v, got %#v", `1234567890`, dp.APIToken)
+	}
+	if iss.CA != certmagic.GoogleTrustProductionCA {
+		t.Errorf("Expected iss.CA to be %#v, got %#v", `api_key_1233232`, iss.CA)
+	}
+	if iss.AltHTTPPort != 8080 {
+		t.Errorf("Expected iss.AltHTTPPort to be %#v, got %#v", 8080, iss.AltHTTPPort)
+	}
+	if iss.PreferredChains.RootCommonName[0] != "nameroot1" {
+		t.Errorf("Expected iss.PreferredChains.RootCommonName[0] to be %#v, got %#v", "nameroot1", iss.PreferredChains.RootCommonName[0])
+	}
+	if iss.PreferredChains.RootCommonName[1] != "nameroot2" {
+		t.Errorf("Expected iss.PreferredChains.RootCommonName[1] to be %#v, got %#v", "nameroot2", iss.PreferredChains.RootCommonName[1])
+	}
+	if *iss.PreferredChains.Smallest != true {
+		t.Errorf("Expected *iss.PreferredChains.Smallest to be %#v, got %#v", true, *iss.PreferredChains.Smallest)
+	}
+	// t.Logf("%+v", iss)
+	// t.Logf("%+v", iss.CNAMEValidation)
+}
+
+func TestSetupParseWithOneTLSIssuerZeroSSL(t *testing.T) {
 	params := `tls {
 		issuer zerossl api_key_1233232 {
 			validity_days 30
