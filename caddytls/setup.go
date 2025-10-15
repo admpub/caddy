@@ -89,6 +89,7 @@ func setupTLS(c *caddy.Controller) error {
 		return nil
 	}
 
+	var tokenForCA string
 	for c.Next() {
 		var certificateFile, keyFile, loadDir, maxCerts, askURL string
 		var onDemand bool
@@ -129,22 +130,8 @@ func setupTLS(c *caddy.Controller) error {
 					return c.ArgErr()
 				}
 				config.Issuer.CA = arg[0]
-				if config.Issuer.CA == certmagic.ZeroSSLProductionCA {
-					issuer := &certmagic.ZeroSSLIssuer{
-						APIKey: os.Getenv(`ZEROSSL_API_KEY`),
-						Logger: config.Manager.Logger,
-					}
-					if len(issuer.APIKey) == 0 && len(arg) > 1 {
-						issuer.APIKey = arg[1]
-					}
-					if len(issuer.APIKey) == 0 {
-						return c.Err("ZeroSSL API key is required but not set. You can use the environment variable ZEROSSL_API_KEY to set this value.")
-					}
-					if len(config.Manager.Issuers) > 0 {
-						config.Manager.Issuers[0] = issuer
-					} else {
-						config.Manager.Issuers = []certmagic.Issuer{issuer}
-					}
+				if len(arg) > 1 {
+					tokenForCA = arg[1]
 				}
 			case "key_type":
 				arg := c.RemainingArgs()
@@ -341,6 +328,26 @@ func setupTLS(c *caddy.Controller) error {
 	}
 
 	SetDefaultTLSParams(config)
+
+	if config.Issuer.CA == certmagic.ZeroSSLProductionCA {
+		issuer := &certmagic.ZeroSSLIssuer{
+			APIKey: os.Getenv(`ZEROSSL_API_KEY`),
+			Logger: config.Manager.Logger,
+		}
+		if len(issuer.APIKey) == 0 && len(tokenForCA) > 1 {
+			issuer.APIKey = tokenForCA
+		}
+		if len(issuer.APIKey) == 0 {
+			return c.Err("ZeroSSL API key is required but not set. You can use the environment variable ZEROSSL_API_KEY to set this value.")
+		}
+		if len(config.Manager.Issuers) > 0 {
+			config.Manager.Issuers[0] = issuer
+		} else {
+			config.Manager.Issuers = []certmagic.Issuer{issuer}
+		}
+	} else if len(config.Manager.Issuers) > 0 && config.Manager.Issuers[0] != config.Issuer {
+		config.Manager.Issuers[0] = config.Issuer
+	}
 
 	// generate self-signed cert if needed
 	if config.SelfSigned {
