@@ -36,7 +36,6 @@ var inputs = []dnsproviders.Input{
 		Label:       "Zone Token",
 		Placeholder: "",
 		Help:        "Zone token for Cloudflare API",
-		Required:    true,
 	},
 }
 

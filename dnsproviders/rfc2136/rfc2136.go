@@ -32,7 +32,7 @@ var inputs = []dnsproviders.Input{
 		Label:       "Nameserver",
 		Placeholder: "",
 		Help:        "The nameserver to use for RFC2136.",
-		Required:    false,
+		Required:    true,
 		Pattern:     "",
 	},
 	{
@@ -41,7 +41,7 @@ var inputs = []dnsproviders.Input{
 		Label:       "Key Algorithm",
 		Placeholder: "",
 		Help:        "The key algorithm to use for RFC2136.",
-		Required:    false,
+		Required:    true,
 		Pattern:     "",
 	},
 	{
@@ -50,7 +50,7 @@ var inputs = []dnsproviders.Input{
 		Label:       "Key Name",
 		Placeholder: "",
 		Help:        "The key name to use for RFC2136.",
-		Required:    false,
+		Required:    true,
 		Pattern:     "",
 	},
 	{
@@ -59,7 +59,7 @@ var inputs = []dnsproviders.Input{
 		Label:       "Key",
 		Placeholder: "",
 		Help:        "The key to use for RFC2136.",
-		Required:    false,
+		Required:    true,
 		Pattern:     "",
 	},
 }
