@@ -12,7 +12,7 @@ import (
 	"github.com/libdns/cloudflare"
 )
 
-const tokenErr = "cloudflare: email and API tokens are no longer supported in Casket, please use Scoped Tokens only. " +
+const tokenErr = "cloudflare: email and API tokens are no longer supported in Caddy, please use Scoped Tokens only. " +
 	"More info: https://pkg.go.dev/github.com/libdns/cloudflare#readme-authenticating"
 
 func init() {
@@ -23,24 +23,46 @@ func init() {
 var inputs = []dnsproviders.Input{
 	{
 		Type:        "text",
-		Name:        "token",
+		Name:        "api_token",
 		Label:       "API Token",
 		Placeholder: "",
 		Help:        "API token for Cloudflare API",
 		Required:    true,
 		Pattern:     "[a-zA-Z0-9_-]+",
 	},
+	{
+		Type:        "text",
+		Name:        "zone_token",
+		Label:       "Zone Token",
+		Placeholder: "",
+		Help:        "Zone token for Cloudflare API",
+		Required:    true,
+	},
 }
 
-var envNames = []string{
-	"CLOUDFLARE_ZONE_API_TOKEN",
-	"CF_ZONE_API_TOKEN",
+var envAPITokenNames = []string{
 	"CLOUDFLARE_DNS_API_TOKEN",
 	"CF_DNS_API_TOKEN",
+	"CF_API_TOKEN",
+}
+
+var envZoneTokenNames = []string{
+	"CLOUDFLARE_ZONE_API_TOKEN",
+	"CF_ZONE_API_TOKEN",
+	"CF_ZONE_TOKEN",
 }
 
 func getAPIToken() string {
-	for _, envName := range envNames {
+	for _, envName := range envAPITokenNames {
+		if v, ok := os.LookupEnv(envName); ok && len(v) > 0 {
+			return v
+		}
+	}
+	return ""
+}
+
+func getZoneToken() string {
+	for _, envName := range envZoneTokenNames {
 		if v, ok := os.LookupEnv(envName); ok && len(v) > 0 {
 			return v
 		}
@@ -56,30 +78,34 @@ func getAPIToken() string {
 // len(2): credentials[0] = token type (must be "zonetoken")
 // ------- credentials[1] = Scoped API token
 func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
-	provider := &cloudflare.Provider{}
+	provider := &cloudflare.Provider{
+		APIToken:  getAPIToken(),
+		ZoneToken: getZoneToken(),
+	}
 
 	credentials := c.RemainingArgs()
 
 	switch len(credentials) {
 	case 0:
-
 		// Try to get credentials from environment variables.
-		token := getAPIToken()
-		if len(token) == 0 {
+		if len(provider.APIToken) == 0 {
 			// Try to get credentials from the block (`{ token ... }`)
 			for nesting := c.Nesting(); c.NextBlockNesting(nesting); {
 				switch c.Val() {
-				case "token":
+				case "api_token":
 					if !c.NextArg() {
 						return nil, c.ArgErr()
 					}
 					provider.APIToken = c.Val()
+				case "zone_token":
+					if !c.NextArg() {
+						return nil, c.ArgErr()
+					}
+					provider.ZoneToken = c.Val()
 				default:
 					return nil, c.Errf("unknown property '%s'", c.Val())
 				}
 			}
-		} else {
-			provider.APIToken = token
 		}
 	case 1:
 		provider.APIToken = credentials[0]

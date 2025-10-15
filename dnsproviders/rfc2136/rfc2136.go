@@ -14,10 +14,10 @@ import (
 const (
 	envNamespace = "RFC2136_"
 
-	EnvTSIGKey       = envNamespace + "TSIG_KEY"
-	EnvTSIGSecret    = envNamespace + "TSIG_SECRET"
-	EnvTSIGAlgorithm = envNamespace + "TSIG_ALGORITHM"
-	EnvNameserver    = envNamespace + "NAMESERVER"
+	EnvKeyName      = envNamespace + "KEY_NAME"
+	EnvKey          = envNamespace + "KEY"
+	EnvKeyAlgorithm = envNamespace + "KEY_ALGORITHM"
+	EnvNameserver   = envNamespace + "SERVER"
 )
 
 func init() {
@@ -28,7 +28,7 @@ func init() {
 var inputs = []dnsproviders.Input{
 	{
 		Type:        "text",
-		Name:        "nameserver",
+		Name:        "server",
 		Label:       "Nameserver",
 		Placeholder: "",
 		Help:        "The nameserver to use for RFC2136.",
@@ -37,28 +37,28 @@ var inputs = []dnsproviders.Input{
 	},
 	{
 		Type:        "text",
-		Name:        "algorithm",
-		Label:       "TSIG Algorithm",
+		Name:        "key_alg",
+		Label:       "Key Algorithm",
 		Placeholder: "",
-		Help:        "The TSIG algorithm to use for RFC2136.",
+		Help:        "The key algorithm to use for RFC2136.",
 		Required:    false,
 		Pattern:     "",
 	},
 	{
 		Type:        "text",
-		Name:        "key",
-		Label:       "TSIG Key",
+		Name:        "key_name",
+		Label:       "Key Name",
 		Placeholder: "",
-		Help:        "The TSIG key to use for RFC2136.",
+		Help:        "The key name to use for RFC2136.",
 		Required:    false,
 		Pattern:     "",
 	},
 	{
 		Type:        "password",
-		Name:        "secret",
-		Label:       "TSIG Secret",
+		Name:        "key",
+		Label:       "Key",
 		Placeholder: "",
-		Help:        "The TSIG secret to use for RFC2136.",
+		Help:        "The key to use for RFC2136.",
 		Required:    false,
 		Pattern:     "",
 	},
@@ -68,15 +68,15 @@ var inputs = []dnsproviders.Input{
 // The credentials are interpreted as follows:
 //
 // len(0): use credentials from environment or configuration block
-// len(4): credentials[0] = nameserver
-// ------- credentials[1] = TSIG algorithm
-// ------- credentials[2] = TSIG key
-// ------- credentials[3] = TSIG secret
+// len(4): credentials[0] = server
+// ------- credentials[1] = key_alg
+// ------- credentials[2] = key_name
+// ------- credentials[3] = key
 func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 	provider := &rfc2136.Provider{
-		KeyName: os.Getenv(EnvTSIGKey),
-		Key:     os.Getenv(EnvTSIGSecret),
-		KeyAlg:  os.Getenv(EnvTSIGAlgorithm),
+		KeyName: os.Getenv(EnvKeyName),
+		Key:     os.Getenv(EnvKey),
+		KeyAlg:  os.Getenv(EnvKeyAlgorithm),
 		Server:  os.Getenv(EnvNameserver),
 	}
 
@@ -87,22 +87,22 @@ func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 		// check the configuration block for options { key ..., secret ..., algorithm ..., nameserver ... }
 		for nesting := c.Nesting(); c.NextBlockNesting(nesting); {
 			switch c.Val() {
-			case "key":
+			case "key_name":
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}
 				provider.KeyName = c.Val()
-			case "secret":
+			case "key":
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}
 				provider.Key = c.Val()
-			case "algorithm":
+			case "key_alg":
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}
 				provider.KeyAlg = c.Val()
-			case "nameserver":
+			case "server":
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}

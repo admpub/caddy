@@ -19,9 +19,9 @@ const (
 	// EnvAPIBase is the environment variable name for the ACME-DNS API address.
 	// (e.g. https://acmedns.your-domain.com).
 	EnvAPIBase = envNamespace + "API_BASE"
-	// EnvStoragePath is the environment variable name for the ACME-DNS JSON account data file.
+	// EnvConfigFilePath is the environment variable name for the ACME-DNS JSON account data file.
 	// A per-domain account will be registered/persisted to this file and used for TXT updates.
-	EnvStoragePath = envNamespace + "STORAGE_PATH"
+	EnvConfigFilePath = envNamespace + "CONFIG_FILE_PATH"
 )
 
 func init() {
@@ -32,19 +32,19 @@ func init() {
 var inputs = []dnsproviders.Input{
 	{
 		Type:        "text",
-		Name:        "server_url",
-		Label:       "Server URL",
-		Placeholder: "https://acme-dns.example.com",
-		Help:        "The ACME-DNS server URL.",
+		Name:        "config_file_path",
+		Label:       "Config File",
+		Placeholder: "/path/to/storage.json",
+		Help:        "The path to the ACME-DNS JSON account data file.",
 		Required:    false,
 		Pattern:     "",
 	},
 	{
 		Type:        "text",
-		Name:        "storage",
-		Label:       "Storage",
-		Placeholder: "/path/to/storage.json",
-		Help:        "The path to the ACME-DNS JSON account data file.",
+		Name:        "server_url",
+		Label:       "Server URL",
+		Placeholder: "https://acme-dns.example.com",
+		Help:        "The ACME-DNS server URL.",
 		Required:    false,
 		Pattern:     "",
 	},
@@ -82,19 +82,24 @@ var inputs = []dnsproviders.Input{
 //
 // len(0): use credentials from environment or block:
 //
-//	        tls dns acmedns {
-//	            server_url <server_url>
-//	            storage /path/to/storage.json
-//	            username <username>
-//	            password <password>
-//		        subdomain <subdomain>
-//	        }
+//	tls dns acmedns {
+//		server_url <server_url>
+//		username <username>
+//		password <password>
+//		subdomain <subdomain>
+//	}
+//
+// or:
+//
+//	tls dns acmedns {
+//	    config_file_path /path/to/storage.json
+//	}
 func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 	credentials := c.RemainingArgs()
 
 	switch len(credentials) {
 	case 0:
-		configPath := os.Getenv(EnvStoragePath)
+		configPath := os.Getenv(EnvConfigFilePath)
 		provider := &acmedns.Provider{
 			// Try to get credentials from environment variables.
 			ServerURL: os.Getenv(EnvAPIBase),
@@ -107,7 +112,7 @@ func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}
-			case "storage":
+			case "config_file_path":
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}

@@ -25,7 +25,7 @@ func init() {
 var inputs = []dnsproviders.Input{
 	{
 		Type:        "text",
-		Name:        "token",
+		Name:        "api_token",
 		Label:       "API Token",
 		Placeholder: "",
 		Help:        "API token for DNSPOD API",
@@ -51,7 +51,7 @@ func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 		// Try to get credentials from the block (`{ key ... }`)
 		for nesting := c.Nesting(); c.NextBlockNesting(nesting); {
 			switch c.Val() {
-			case "token":
+			case "api_token":
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}

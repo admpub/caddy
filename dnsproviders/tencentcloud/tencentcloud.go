@@ -28,7 +28,7 @@ func init() {
 var inputs = []dnsproviders.Input{
 	{
 		Type:        "text",
-		Name:        "key",
+		Name:        "secret_id",
 		Label:       "Secret Id",
 		Placeholder: "",
 		Help:        "",
@@ -37,7 +37,7 @@ var inputs = []dnsproviders.Input{
 	},
 	{
 		Type:        "password",
-		Name:        "secret",
+		Name:        "secret_key",
 		Label:       "Secret Key",
 		Placeholder: "",
 		Help:        "",
@@ -54,7 +54,7 @@ var inputs = []dnsproviders.Input{
 	},
 	{
 		Type:        "text",
-		Name:        "token",
+		Name:        "session_token",
 		Label:       "Session Token",
 		Placeholder: "",
 		Help:        "",
@@ -65,10 +65,10 @@ var inputs = []dnsproviders.Input{
 // The credentials are interpreted as follows:
 //
 // len(0): use credentials from environment or configuration block
-// len(4): credentials[0] = key
-// ------- credentials[1] = secret
+// len(4): credentials[0] = secret_id
+// ------- credentials[1] = secret_key
 // ------- credentials[2] = region
-// ------- credentials[3] = token
+// ------- credentials[3] = session_token
 func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 	provider := &tencentcloud.Provider{
 		SecretId:     os.Getenv(EnvSecretID),
@@ -84,12 +84,12 @@ func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 		// check the configuration block for options { key ..., secret ..., region ... }
 		for nesting := c.Nesting(); c.NextBlockNesting(nesting); {
 			switch c.Val() {
-			case "key", "secret_id":
+			case "secret_id":
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}
 				provider.SecretId = c.Val()
-			case "secret", "secret_key":
+			case "secret_key":
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}
@@ -99,7 +99,7 @@ func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 					return nil, c.ArgErr()
 				}
 				provider.Region = c.Val()
-			case "token", "session_token":
+			case "session_token":
 				if !c.NextArg() {
 					return nil, c.ArgErr()
 				}
