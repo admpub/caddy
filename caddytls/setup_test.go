@@ -16,13 +16,53 @@ package caddytls
 
 import (
 	"crypto/tls"
+	"errors"
 	"log"
 	"os"
 	"testing"
 
 	"github.com/admpub/caddy"
 	"github.com/caddyserver/certmagic"
+	"github.com/libdns/cloudflare"
 )
+
+func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
+	provider := &cloudflare.Provider{}
+
+	credentials := c.RemainingArgs()
+
+	switch len(credentials) {
+	case 0:
+		// Try to get credentials from environment variables.
+		if len(provider.APIToken) == 0 {
+			// Try to get credentials from the block (`{ token ... }`)
+			for nesting := c.Nesting(); c.NextBlockNesting(nesting); {
+				switch c.Val() {
+				case "api_token":
+					if !c.NextArg() {
+						return nil, c.ArgErr()
+					}
+					provider.APIToken = c.Val()
+				case "zone_token":
+					if !c.NextArg() {
+						return nil, c.ArgErr()
+					}
+					provider.ZoneToken = c.Val()
+				default:
+					return nil, c.Errf("unknown property '%s'", c.Val())
+				}
+			}
+		}
+	default:
+		return nil, errors.New("invalid credentials length")
+	}
+
+	if provider.APIToken == "" {
+		return nil, errors.New("cloudflare: missing credentials")
+	}
+
+	return provider, nil
+}
 
 func TestMain(m *testing.M) {
 	// Write test certificates to disk before tests, and clean up
@@ -420,6 +460,32 @@ func TestSetupParseWithOneTLSProtocol(t *testing.T) {
 	if cfg.ProtocolMinVersion != tls.VersionTLS12 && cfg.ProtocolMaxVersion != tls.VersionTLS12 {
 		t.Errorf("Expected 'tls1.2 (0x0303)' as ProtocolMinVersion/ProtocolMaxVersion, got %v/%v", cfg.ProtocolMinVersion, cfg.ProtocolMaxVersion)
 	}
+}
+
+func TestSetupParseWithOneTLSDNS(t *testing.T) {
+	RegisterDNSProvider(`cloudflare`, NewDNSProvider)
+	params := `tls {
+            dns cloudflare {
+			  api_token 1234567890
+			}
+        }`
+	cfg := &Config{Manager: &certmagic.Config{}, Issuer: &certmagic.ACMEIssuer{}}
+	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
+	c := caddy.NewTestController("", params)
+
+	err := setupTLS(c)
+	if err != nil {
+		t.Errorf("Expected no errors, got: %v", err)
+	}
+
+	if cfg.Issuer.DNS01Solver == nil {
+		t.Errorf("Expected DNS01Solver to be not nil")
+	}
+	dp := cfg.Issuer.DNS01Solver.(*certmagic.DNS01Solver).DNSProvider.(*cloudflare.Provider)
+	if dp.APIToken != "1234567890" {
+		t.Errorf("Expected DNS01Solver to be not nil")
+	}
+	t.Logf("%+v", dp)
 }
 
 func TestSetupParseWithEmail(t *testing.T) {
