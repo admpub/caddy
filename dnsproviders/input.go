@@ -115,13 +115,16 @@ func (i Input) RenderHTMLLabel() string {
 type Inputs []Input
 
 func (i Inputs) RenderCaddyfile() []string {
-	results := make([]string, len(i))
-	for i, input := range i {
+	results := make([]string, 0, len(i))
+	for _, input := range i {
 		value := input.Value
 		if len(value) == 0 && len(input.Default) > 0 {
 			value = input.Default
 		}
-		results[i] = input.Name + ` ` + value
+		if len(value) == 0 {
+			continue
+		}
+		results = append(results, input.Name+` `+value)
 	}
 	return results
 }
