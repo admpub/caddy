@@ -89,8 +89,6 @@ func setupTLS(c *caddy.Controller) error {
 		return nil
 	}
 
-	var hadIssuer bool
-	var hadCA bool
 	for c.Next() {
 		var certificateFile, keyFile, loadDir, maxCerts, askURL string
 		var onDemand bool
@@ -130,8 +128,7 @@ func setupTLS(c *caddy.Controller) error {
 				if len(arg) != 1 {
 					return c.ArgErr()
 				}
-				config.Issuer.CA = arg[0]
-				hadCA = true
+				config.setIssuerCA(arg[0])
 			case "issuer":
 				if !c.NextArg() {
 					return c.ArgErr()
@@ -145,7 +142,6 @@ func setupTLS(c *caddy.Controller) error {
 				if err != nil {
 					return err
 				}
-				hadIssuer = true
 			case "key_type":
 				arg := c.RemainingArgs()
 				value, ok := supportedKeyTypes[strings.ToUpper(arg[0])]
@@ -341,12 +337,6 @@ func setupTLS(c *caddy.Controller) error {
 	}
 
 	SetDefaultTLSParams(config)
-	if !hadIssuer && len(config.Manager.Issuers) > 0 && config.Manager.Issuers[0] != config.Issuer {
-		config.Manager.Issuers[0] = config.Issuer
-	}
-	if !hadCA && config.Issuer.CA != certmagic.DefaultACME.CA {
-		config.Issuer.CA = certmagic.DefaultACME.CA
-	}
 
 	// generate self-signed cert if needed
 	if config.SelfSigned {
