@@ -38,7 +38,6 @@ import (
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/caddyserver/certmagic"
-	"go.uber.org/zap"
 
 	_ "github.com/admpub/caddy/caddyhttp" // plug in the HTTP server type
 	// This is where other plugins get plugged in (imported)
@@ -87,8 +86,7 @@ func Run() {
 	caddy.AppName = appName
 	caddy.AppVersion = module.Version
 	caddy.OnProcessExit = append(caddy.OnProcessExit, func() {
-		// TODO: Redirect to our own logger instead of zap.NewNop()
-		certmagic.CleanUpOwnLocks(context.TODO(), zap.NewNop())
+		certmagic.CleanUpOwnLocks(context.TODO(), certmagic.Default.Logger)
 	})
 	certmagic.UserAgent = appName + "/" + cleanModVersion
 
