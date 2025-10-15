@@ -89,7 +89,8 @@ func setupTLS(c *caddy.Controller) error {
 		return nil
 	}
 
-	var tokenForCA string
+	var hadIssuer bool
+	var hadCA bool
 	for c.Next() {
 		var certificateFile, keyFile, loadDir, maxCerts, askURL string
 		var onDemand bool
@@ -126,13 +127,25 @@ func setupTLS(c *caddy.Controller) error {
 			switch c.Val() {
 			case "ca":
 				arg := c.RemainingArgs()
-				if len(arg) < 1 {
+				if len(arg) != 1 {
 					return c.ArgErr()
 				}
 				config.Issuer.CA = arg[0]
-				if len(arg) > 1 {
-					tokenForCA = arg[1]
+				hadCA = true
+			case "issuer":
+				if !c.NextArg() {
+					return c.ArgErr()
 				}
+				issuerType := c.Val()
+				issuerParse, ok := issuerParsers[issuerType]
+				if !ok {
+					return c.Errf("Unknown issuer by name '%s'", issuerType)
+				}
+				err := issuerParse(c, config)
+				if err != nil {
+					return err
+				}
+				hadIssuer = true
 			case "key_type":
 				arg := c.RemainingArgs()
 				value, ok := supportedKeyTypes[strings.ToUpper(arg[0])]
@@ -328,25 +341,11 @@ func setupTLS(c *caddy.Controller) error {
 	}
 
 	SetDefaultTLSParams(config)
-
-	if config.Issuer.CA == certmagic.ZeroSSLProductionCA {
-		issuer := &certmagic.ZeroSSLIssuer{
-			APIKey: os.Getenv(`ZEROSSL_API_KEY`),
-			Logger: config.Manager.Logger,
-		}
-		if len(issuer.APIKey) == 0 && len(tokenForCA) > 1 {
-			issuer.APIKey = tokenForCA
-		}
-		if len(issuer.APIKey) == 0 {
-			return c.Err("ZeroSSL API key is required but not set. You can use the environment variable ZEROSSL_API_KEY to set this value.")
-		}
-		if len(config.Manager.Issuers) > 0 {
-			config.Manager.Issuers[0] = issuer
-		} else {
-			config.Manager.Issuers = []certmagic.Issuer{issuer}
-		}
-	} else if len(config.Manager.Issuers) > 0 && config.Manager.Issuers[0] != config.Issuer {
+	if !hadIssuer && len(config.Manager.Issuers) > 0 && config.Manager.Issuers[0] != config.Issuer {
 		config.Manager.Issuers[0] = config.Issuer
+	}
+	if !hadCA && config.Issuer.CA != certmagic.DefaultACME.CA {
+		config.Issuer.CA = certmagic.DefaultACME.CA
 	}
 
 	// generate self-signed cert if needed

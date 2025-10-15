@@ -20,6 +20,7 @@ import (
 	"log"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/admpub/caddy"
 	"github.com/caddyserver/certmagic"
@@ -483,9 +484,65 @@ func TestSetupParseWithOneTLSDNS(t *testing.T) {
 	}
 	dp := cfg.Issuer.DNS01Solver.(*certmagic.DNS01Solver).DNSProvider.(*cloudflare.Provider)
 	if dp.APIToken != "1234567890" {
-		t.Errorf("Expected DNS01Solver to be not nil")
+		t.Errorf("Expected cfg.APIToken to be %#v, got %#v", `1234567890`, dp.APIToken)
 	}
 	t.Logf("%+v", dp)
+}
+
+func TestSetupParseWithOneTLSIssuer(t *testing.T) {
+	RegisterDNSProvider(`cloudflare`, NewDNSProvider)
+	params := `tls {
+		issuer zerossl api_key_1233232 {
+			validity_days 30
+			alt_http_port 8080
+			propagation_delay 3s
+			propagation_timeout 1m
+			resolvers 1.1.1.1 8.8.8.8
+			dns_ttl 10s
+            dns cloudflare {
+			  api_token 1234567890
+			}
+		}
+    }`
+	cfg := &Config{Manager: &certmagic.Config{}, Issuer: &certmagic.ACMEIssuer{}}
+	RegisterConfigGetter("", func(c *caddy.Controller) *Config { return cfg })
+	c := caddy.NewTestController("", params)
+
+	err := setupTLS(c)
+	if err != nil {
+		t.Errorf("Expected no errors, got: %v", err)
+	}
+	iss := cfg.Manager.Issuers[0].(*certmagic.ZeroSSLIssuer)
+	dp := iss.CNAMEValidation.DNSProvider.(*cloudflare.Provider)
+	if dp.APIToken != "1234567890" {
+		t.Errorf("Expected dp.APIToken to be %#v, got %#v", `1234567890`, dp.APIToken)
+	}
+	if iss.APIKey != "api_key_1233232" {
+		t.Errorf("Expected iss.APIKey to be %#v, got %#v", `api_key_1233232`, iss.APIKey)
+	}
+	if iss.ValidityDays != 30 {
+		t.Errorf("Expected iss.ValidityDays to be %#v, got %#v", 30, iss.ValidityDays)
+	}
+	if iss.AltHTTPPort != 8080 {
+		t.Errorf("Expected iss.AltHTTPPort to be %#v, got %#v", 8080, iss.AltHTTPPort)
+	}
+	if iss.CNAMEValidation.TTL != 10*time.Second {
+		t.Errorf("Expected iss.CNAMEValidation.TTL to be %#v, got %#v", 10*time.Second, iss.CNAMEValidation.TTL)
+	}
+	if iss.CNAMEValidation.PropagationDelay != 3*time.Second {
+		t.Errorf("Expected iss.CNAMEValidation.PropagationDelay to be %#v, got %#v", 3*time.Second, iss.CNAMEValidation.PropagationDelay)
+	}
+	if iss.CNAMEValidation.PropagationTimeout != 1*time.Minute {
+		t.Errorf("Expected iss.CNAMEValidation.PropagationTimeout to be %#v, got %#v", 1*time.Minute, iss.CNAMEValidation.PropagationTimeout)
+	}
+	if iss.CNAMEValidation.Resolvers[0] != `1.1.1.1` {
+		t.Errorf("Expected iss.CNAMEValidation.Resolvers[0] to be %#v, got %#v", `1.1.1.1`, iss.CNAMEValidation.Resolvers[0])
+	}
+	if iss.CNAMEValidation.Resolvers[1] != `8.8.8.8` {
+		t.Errorf("Expected iss.CNAMEValidation.Resolvers[1] to be %#v, got %#v", `8.8.8.8`, iss.CNAMEValidation.Resolvers[1])
+	}
+	// t.Logf("%+v", iss)
+	// t.Logf("%+v", iss.CNAMEValidation)
 }
 
 func TestSetupParseWithEmail(t *testing.T) {
