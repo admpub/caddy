@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	envNamespace = "TENCENTCLOUD_" // egeone的配置和tencentcloud的一致
+	envNamespace = "TENCENTCLOUD_" // edgeone的配置和tencentcloud的一致
 
 	EnvSecretID     = envNamespace + "SECRET_ID"
 	EnvSecretKey    = envNamespace + "SECRET_KEY"
@@ -22,7 +22,7 @@ const (
 
 func init() {
 	caddytls.RegisterDNSProvider("edgeone", NewDNSProvider)
-	dnsproviders.RegisterInputs("edgeone", `EgeOne`, inputs)
+	dnsproviders.RegisterInputs("edgeone", `EdgeOne`, inputs)
 }
 
 var inputs = []dnsproviders.Input{
@@ -122,7 +122,7 @@ func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 	}
 
 	if provider.SecretId == "" || provider.SecretKey == "" {
-		return nil, errors.New("missing EgeOne DNS key configuration")
+		return nil, errors.New("missing EdgeOne DNS key configuration")
 	}
 
 	return provider, nil
