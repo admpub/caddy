@@ -114,12 +114,6 @@ type ReverseProxy struct {
 	srvResolver srvResolver
 }
 
-// Though the relevant directive prefix is just "unix:", url.Parse
-// will - assuming the regular URL scheme - add additional slashes
-// as if "unix" was a request protocol.
-// What we need is just the path, so if "unix:/var/run/www.socket"
-// was the proxy directive, the parsed hostName would be
-// "unix:///var/run/www.socket", hence the ambiguous trimming.
 func socketDial(hostName string, timeout time.Duration) func(ctx context.Context, network, addr string) (conn net.Conn, err error) {
 	return func(ctx context.Context, network, addr string) (conn net.Conn, err error) {
 		return dialContextTimeout(ctx, "unix", hostName[len("unix:"):], timeout)
@@ -169,18 +163,19 @@ func singleJoiningSlash(a, b string) string {
 func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, timeout, fallbackDelay time.Duration) *ReverseProxy {
 	targetQuery := target.RawQuery
 	director := func(req *http.Request) {
-		if target.Scheme == caddyconst.SchemeUnix {
+		switch target.Scheme {
+		case caddyconst.SchemeUnix:
 			// to make Dial work with unix URL,
 			// scheme and host have to be faked
 			req.URL.Scheme = caddyconst.SchemeHTTP
 			req.URL.Host = "socket"
-		} else if target.Scheme == caddyconst.SchemeSrv {
+		case caddyconst.SchemeSrv:
 			req.URL.Scheme = caddyconst.SchemeHTTP
 			req.URL.Host = target.Host
-		} else if target.Scheme == caddyconst.SchemeSrvAndHTTPS {
+		case caddyconst.SchemeSrvAndHTTPS:
 			req.URL.Scheme = caddyconst.SchemeHTTPS
 			req.URL.Host = target.Host
-		} else {
+		default:
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 		}
