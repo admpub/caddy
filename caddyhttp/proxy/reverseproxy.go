@@ -122,7 +122,7 @@ type ReverseProxy struct {
 // "unix:///var/run/www.socket", hence the ambiguous trimming.
 func socketDial(hostName string, timeout time.Duration) func(ctx context.Context, network, addr string) (conn net.Conn, err error) {
 	return func(ctx context.Context, network, addr string) (conn net.Conn, err error) {
-		return dialContextTimeout(ctx, "unix", hostName[len("unix://"):], timeout)
+		return dialContextTimeout(ctx, "unix", hostName[len("unix:"):], timeout)
 	}
 }
 
@@ -231,7 +231,7 @@ func NewSingleHostReverseProxy(target *url.URL, without string, keepalive int, t
 		// to /var/run/www.socket/test, rendering paths useless.
 		if target.Scheme == caddyconst.SchemeUnix {
 			// See comment on socketDial for the trim
-			socketPrefix := target.String()[len("unix://"):]
+			socketPrefix := target.String()[len("unix:"):]
 			req.URL.Path = strings.TrimPrefix(req.URL.Path, socketPrefix)
 			if req.URL.Opaque != "" {
 				req.URL.Opaque = strings.TrimPrefix(req.URL.Opaque, socketPrefix)

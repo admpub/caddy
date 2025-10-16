@@ -494,7 +494,7 @@ func TestSetupParseWithOneTLSDNS(t *testing.T) {
 
 func TestSetupParseWithOneTLSIssuerACME(t *testing.T) {
 	params := `tls {
-		issuer acme ` + certmagic.GoogleTrustProductionCA + ` {\
+		issuer acme ` + certmagic.GoogleTrustProductionCA + ` {
 			alt_http_port 8080
 			propagation_delay 3s
 			propagation_timeout 1m
