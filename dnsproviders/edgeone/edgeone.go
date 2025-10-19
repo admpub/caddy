@@ -2,7 +2,6 @@ package edgeone
 
 import (
 	"errors"
-	"os"
 
 	"github.com/admpub/caddy"
 	"github.com/admpub/caddy/caddytls"
@@ -11,13 +10,11 @@ import (
 	"github.com/libdns/edgeone"
 )
 
-const (
-	envNamespace = "TENCENTCLOUD_" // edgeone的配置和tencentcloud的一致
-
-	EnvSecretID     = envNamespace + "SECRET_ID"
-	EnvSecretKey    = envNamespace + "SECRET_KEY"
-	EnvRegion       = envNamespace + "REGION"
-	EnvSessionToken = envNamespace + "SESSION_TOKEN"
+var (
+	envSecretIDNames     = []string{`EDGEONE_SECRET_ID`, `TENCENTCLOUD_SECRET_ID`}
+	envSecretKeyNames    = []string{`EDGEONE_SECRET_KEY`, `TENCENTCLOUD_SECRET_KEY`}
+	envRegionNames       = []string{`EDGEONE_REGION`, `TENCENTCLOUD_REGION`}
+	envSessionTokenNames = []string{`EDGEONE_SESSION_TOKEN`, `TENCENTCLOUD_SESSION_TOKEN`}
 )
 
 func init() {
@@ -71,10 +68,10 @@ var inputs = []dnsproviders.Input{
 // ------- credentials[3] = session_token
 func NewDNSProvider(c *caddy.Controller) (certmagic.DNSProvider, error) {
 	provider := &edgeone.Provider{
-		SecretId:     os.Getenv(EnvSecretID),
-		SecretKey:    os.Getenv(EnvSecretKey),
-		Region:       os.Getenv(EnvRegion),
-		SessionToken: os.Getenv(EnvSessionToken),
+		SecretId:     dnsproviders.LookupEnvAnyKey(envSecretIDNames, ``),
+		SecretKey:    dnsproviders.LookupEnvAnyKey(envSecretKeyNames, ``),
+		Region:       dnsproviders.LookupEnvAnyKey(envRegionNames, ``),
+		SessionToken: dnsproviders.LookupEnvAnyKey(envSessionTokenNames, ``),
 	}
 
 	credentials := c.RemainingArgs()

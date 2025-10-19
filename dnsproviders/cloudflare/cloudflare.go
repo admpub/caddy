@@ -2,7 +2,6 @@ package cloudflare
 
 import (
 	"errors"
-	"os"
 	"strings"
 
 	"github.com/admpub/caddy"
@@ -52,21 +51,11 @@ var envZoneTokenNames = []string{
 }
 
 func getAPIToken() string {
-	for _, envName := range envAPITokenNames {
-		if v, ok := os.LookupEnv(envName); ok && len(v) > 0 {
-			return v
-		}
-	}
-	return ""
+	return dnsproviders.LookupEnvAnyKey(envAPITokenNames, ``)
 }
 
 func getZoneToken() string {
-	for _, envName := range envZoneTokenNames {
-		if v, ok := os.LookupEnv(envName); ok && len(v) > 0 {
-			return v
-		}
-	}
-	return ""
+	return dnsproviders.LookupEnvAnyKey(envZoneTokenNames, ``)
 }
 
 // NewDNSProvider returns a new Cloudflare DNS challenge provider.
