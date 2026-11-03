@@ -40,6 +40,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/admpub/caddy/caddyfile"
@@ -106,6 +107,15 @@ type Instance struct {
 	// servers is the list of servers with their listeners
 	servers []ServerListener
 
+	// serversMu guards servers, because a server whose serving loop fails
+	// unexpectedly replaces its own listener (to keep serving) while other
+	// goroutines (e.g. a reload) read the list of listeners
+	serversMu sync.RWMutex
+
+	// stopping is set as soon as the instance begins to shut down; servers
+	// must not try to recover their listeners anymore once it is set
+	stopping atomic.Bool
+
 	// these callbacks execute when certain events occur
 	OnFirstStartup  []func() error // starting, not as part of a restart
 	OnStartup       []func() error // starting, even as part of a restart
@@ -129,13 +139,34 @@ func Instances() []*Instance {
 }
 
 // Servers returns the ServerListeners in i.
-func (i *Instance) Servers() []ServerListener { return i.servers }
+func (i *Instance) Servers() []ServerListener {
+	i.serversMu.RLock()
+	defer i.serversMu.RUnlock()
+	return i.servers
+}
+
+// setServerListener replaces the listener of the server at index idx, so a
+// later reload inherits the listener that is actually being served on.
+func (i *Instance) setServerListener(idx int, ln net.Listener) {
+	i.serversMu.Lock()
+	if idx >= 0 && idx < len(i.servers) {
+		i.servers[idx].listener = ln
+	}
+	i.serversMu.Unlock()
+}
 
 // Stop stops all servers contained in i. It does NOT
 // execute shutdown callbacks.
 func (i *Instance) Stop() error {
+	// tell the servers not to recover their listeners anymore
+	i.stopping.Store(true)
+
 	// stop the servers
-	for _, s := range i.servers {
+	i.serversMu.RLock()
+	servers := make([]ServerListener, len(i.servers))
+	copy(servers, i.servers)
+	i.serversMu.RUnlock()
+	for _, s := range servers {
 		if gs, ok := s.server.(GracefulServer); ok {
 			if err := gs.Stop(); err != nil {
 				log.Printf("[ERROR] Stopping %s: %v", gs.Address(), err)
@@ -219,7 +250,11 @@ func (i *Instance) Restart(newCaddyfile Input) (*Instance, error) {
 
 	// Add file descriptors of all the sockets that are capable of it
 	restartFds := make(map[string]restartTriple)
-	for _, s := range i.servers {
+	i.serversMu.RLock()
+	servers := make([]ServerListener, len(i.servers))
+	copy(servers, i.servers)
+	i.serversMu.RUnlock()
+	for _, s := range servers {
 		gs, srvOk := s.server.(GracefulServer)
 		ln, lnOk := s.listener.(Listener)
 		pc, pcOk := s.packet.(PacketConn)
@@ -687,6 +722,142 @@ func executeDirectives(inst *Instance, filename string,
 	return nil
 }
 
+// inheritListener reuses the socket of the previous instance so that a
+// graceful restart keeps serving existing connections on the same address.
+// If the old listener can no longer be used (usually because it has already
+// been closed by the old server, e.g. when its accept loop exited before the
+// reload), nil is returned and the caller binds the address again instead.
+// Failing to inherit must not abort the restart: doing so would leave this
+// address - typically :443 - without any listener, making the site
+// unreachable until caddy is fully restarted.
+func inheritListener(gs GracefulServer, old Listener, addr string) net.Listener {
+	file, err := old.File()
+	if err != nil {
+		log.Printf("[WARNING] Unable to inherit listener for %s: %v; listening on it again", addr, err)
+		return nil
+	}
+	defer file.Close()
+
+	ln, err := net.FileListener(file)
+	if err != nil {
+		log.Printf("[WARNING] Unable to inherit listener for %s: %v; listening on it again", addr, err)
+		return nil
+	}
+	return gs.WrapListener(ln)
+}
+
+// inheritPacketConn is the packet-connection counterpart of inheritListener.
+func inheritPacketConn(old PacketConn, addr string) net.PacketConn {
+	file, err := old.File()
+	if err != nil {
+		log.Printf("[WARNING] Unable to inherit packet connection for %s: %v; listening on it again", addr, err)
+		return nil
+	}
+	defer file.Close()
+
+	pc, err := net.FilePacketConn(file)
+	if err != nil {
+		log.Printf("[WARNING] Unable to inherit packet connection for %s: %v; listening on it again", addr, err)
+		return nil
+	}
+	return pc
+}
+
+const (
+	// initialServeBackoff is how long to wait before restoring a server whose
+	// serving loop failed; it doubles on every failure, up to maxServeBackoff
+	initialServeBackoff = 100 * time.Millisecond
+	maxServeBackoff     = 30 * time.Second
+
+	// healthyServeDuration is how long a serving loop must have run for a
+	// failure to be unrelated to the previous one, which resets the backoff
+	healthyServeDuration = 5 * time.Second
+)
+
+// serveWithRecovery serves s on ln and, if the serving loop returns
+// unexpectedly, restores the listener and serves again. Without this, a
+// transient accept error is fatal for the site: net/http closes its listener
+// when Serve returns, so the port stays unbound (typically :443, making the
+// HTTPS site unreachable) until caddy is restarted from scratch.
+func serveWithRecovery(inst *Instance, idx int, s Server, ln net.Listener) error {
+	var addr string
+	if ln != nil {
+		addr = ln.Addr().String()
+	}
+
+	var backoff time.Duration
+	for {
+		if ln == nil {
+			newLn, err := s.Listen()
+			if err != nil {
+				backoff = nextServeBackoff(backoff)
+				log.Printf("[ERROR] Unable to listen on %s again: %v; retrying in %v", addr, err, backoff)
+				if !sleepUnlessStopping(inst, backoff) {
+					return err
+				}
+				continue
+			}
+			ln = newLn
+			addr = ln.Addr().String()
+			// publish the new listener so that a reload inherits this one
+			inst.setServerListener(idx, ln)
+			log.Printf("[INFO] Listening on %s again", addr)
+		}
+
+		startedAt := time.Now()
+		err := s.Serve(ln)
+		if err == nil || inst.stopping.Load() {
+			return err
+		}
+		if time.Since(startedAt) >= healthyServeDuration {
+			// the server ran fine for a while; do not punish it with a long wait
+			backoff = 0
+		}
+		backoff = nextServeBackoff(backoff)
+
+		// the listener was closed along with the serving loop, so a new one
+		// has to be created before serving again
+		ln = nil
+		log.Printf("[ERROR] %s: serving stopped unexpectedly: %v; restarting in %v", addr, err, backoff)
+		if !sleepUnlessStopping(inst, backoff) {
+			return err
+		}
+	}
+}
+
+// nextServeBackoff returns the next delay to use between recovery attempts.
+func nextServeBackoff(cur time.Duration) time.Duration {
+	if cur <= 0 {
+		return initialServeBackoff
+	}
+	cur *= 2
+	if cur > maxServeBackoff {
+		cur = maxServeBackoff
+	}
+	return cur
+}
+
+// sleepUnlessStopping sleeps for d, but returns false as soon as the instance
+// starts shutting down, so recovery never delays a reload or a shutdown.
+func sleepUnlessStopping(inst *Instance, d time.Duration) bool {
+	const step = 100 * time.Millisecond
+	for {
+		if inst.stopping.Load() {
+			return false
+		}
+		if d <= 0 {
+			return true
+		}
+		if d < step {
+			time.Sleep(d)
+			d = 0
+			continue
+		}
+		time.Sleep(step)
+		d -= step
+	}
+}
+
 func startServers(serverList []Server, inst *Instance, restartFds map[string]restartTriple) error {
 	errChan := make(chan error, len(serverList))
 
@@ -740,35 +911,12 @@ func startServers(serverList []Server, inst *Instance, restartFds map[string]res
 			if old, ok := restartFds[addr]; ok {
 				// listener
 				if old.listener != nil {
-					file, err := old.listener.File()
-					if err != nil {
-						return fmt.Errorf("getting old listener file: %v", err)
-					}
-					ln, err = net.FileListener(file)
-					if err != nil {
-						return fmt.Errorf("getting file listener: %v", err)
-					}
-					err = file.Close()
-					if err != nil {
-						return fmt.Errorf("closing copy of listener file: %v", err)
-					}
+					ln = inheritListener(gs, old.listener, addr)
 				}
 				// packetconn
 				if old.packet != nil {
-					file, err := old.packet.File()
-					if err != nil {
-						return fmt.Errorf("getting old packet file: %v", err)
-					}
-					pc, err = net.FilePacketConn(file)
-					if err != nil {
-						return fmt.Errorf("getting file packet connection: %v", err)
-					}
-					err = file.Close()
-					if err != nil {
-						return fmt.Errorf("close copy of packet file: %v", err)
-					}
+					pc = inheritPacketConn(old.packet, addr)
 				}
-				ln = gs.WrapListener(ln)
 			}
 		}
 
@@ -788,26 +936,31 @@ func startServers(serverList []Server, inst *Instance, restartFds map[string]res
 		inst.servers = append(inst.servers, ServerListener{server: s, listener: ln, packet: pc})
 	}
 
-	for _, s := range inst.servers {
+	// take a snapshot: a server may replace its own listener afterwards, and
+	// that must not be read here without holding the lock
+	inst.serversMu.RLock()
+	servers := make([]ServerListener, len(inst.servers))
+	copy(servers, inst.servers)
+	inst.serversMu.RUnlock()
+
+	for idx, s := range servers {
 		inst.wg.Add(2)
 		stopWg.Add(2)
-		func(s Server, ln net.Listener, pc net.PacketConn, inst *Instance) {
-			go func() {
-				defer func() {
-					inst.wg.Done()
-					stopWg.Done()
-				}()
-				errChan <- s.Serve(ln)
+		go func() {
+			defer func() {
+				inst.wg.Done()
+				stopWg.Done()
 			}()
+			errChan <- serveWithRecovery(inst, idx, s.server, s.listener)
+		}()
 
-			go func() {
-				defer func() {
-					inst.wg.Done()
-					stopWg.Done()
-				}()
-				errChan <- s.ServePacket(pc)
+		go func() {
+			defer func() {
+				inst.wg.Done()
+				stopWg.Done()
 			}()
-		}(s.server, s.listener, s.packet, inst)
+			errChan <- s.server.ServePacket(s.packet)
+		}()
 	}
 
 	// Log errors that may be returned from Serve() calls,
