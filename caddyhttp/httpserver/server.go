@@ -573,15 +573,21 @@ func (ln tcpKeepAliveListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = tc.SetKeepAlive(true); err != nil {
-		return nil, err
-	}
+
+	// Enabling keep-alive is best-effort and must never fail the accept:
+	// some kernels/containers reject these socket options (EOPNOTSUPP), and a
+	// connection that was reset right after being accepted can fail here too.
+	// Returning such an error makes http.Server.Serve abort on a non-temporary
+	// accept error, which closes the listener - i.e. the whole port (typically
+	// :443) stops listening until caddy is restarted, and every following
+	// reload fails to inherit the dead listener. So the connection is handed to
+	// the server regardless.
+	_ = tc.SetKeepAlive(true)
+
 	// OpenBSD has no user-settable per-socket TCP keepalive
 	// https://github.com/admpub/caddy/pull/2787
 	if runtime.GOOS != "openbsd" {
-		if err = tc.SetKeepAlivePeriod(3 * time.Minute); err != nil {
-			return nil, err
-		}
+		_ = tc.SetKeepAlivePeriod(3 * time.Minute)
 	}
 	return tc, nil
 }
